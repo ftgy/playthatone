@@ -35,6 +35,9 @@ ADMIN_TOKEN  = os.getenv("ADMIN_TOKEN", "rockNroll2024")
 # Votes each audience member can have on songs not yet played (a vote comes back
 # when its song is played)
 VOTES_PER_SESSION = int(os.getenv("VOTES_PER_SESSION", "3"))
+# Suggestions: minimum similarity (0-1) of both title and artist to treat a
+# misspelled suggestion as a catalog song, an earlier suggestion or a known song
+SUGGESTION_SIMILARITY = float(os.getenv("SUGGESTION_SIMILARITY", "0.8"))
 # DISABLE_AUTH=1: admin routes are open (local dev only)
 AUTH_DISABLED = os.getenv("DISABLE_AUTH") == "1"
 if AUTH_DISABLED:
@@ -56,9 +59,11 @@ def _migrate_db():
             if col not in existing:
                 conn.execute(text(f"ALTER TABLE songs ADD COLUMN {col} {sql_type}"))
                 conn.commit()
-        if "artist" not in [c["name"] for c in sa_inspect(engine).get_columns("proposals")]:
-            conn.execute(text("ALTER TABLE proposals ADD COLUMN artist VARCHAR(200)"))
-            conn.commit()
+        proposal_cols = [c["name"] for c in sa_inspect(engine).get_columns("proposals")]
+        for col, sql_type in (("artist", "VARCHAR(200)"), ("typed", "VARCHAR(400)"), ("similarity", "INTEGER")):
+            if col not in proposal_cols:
+                conn.execute(text(f"ALTER TABLE proposals ADD COLUMN {col} {sql_type}"))
+                conn.commit()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -238,9 +243,15 @@ async def create_proposal(body: ProposalCreate, request: Request, db: Session = 
     title, artist = body.title.strip(), body.artist.strip()
     if not title or not artist:
         raise HTTPException(status_code=400, detail="Título y artista requeridos")
-    existing = _find_song(db, title, artist)
-    if existing:
-        return {"ok": True, "in_catalog": True, "song_id": existing.id}
+
+    def in_catalog(t, a):
+        song, _ = enrich.best_match(t, a, ((s.title, s.artist, s) for s in db.query(Song)), SUGGESTION_SIMILARITY)
+        return song
+
+    # Already in the catalog, even misspelled ("wonderwal / oasys"): vote for it instead
+    song = in_catalog(title, artist)
+    if song:
+        return {"ok": True, "in_catalog": True, "song_id": song.id, "title": song.title, "artist": song.artist}
 
     # 1 suggestion / 30 s per IP
     ip = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or request.client.host
@@ -249,18 +260,29 @@ async def create_proposal(body: ProposalCreate, request: Request, db: Session = 
         raise HTTPException(status_code=429, detail="Espera un poco antes de sugerir otra")
     _proposal_last_ts[ip] = now
 
-    # Same song already suggested → increment its count
-    slug = _slug_title(title) + "--" + _slug_title(artist)
-    proposal = db.query(Proposal).filter(Proposal.slug == slug).first()
+    # Fix the spelling with a music catalog (iTunes, Deezer) when it is close enough
+    typed, similarity = None, None
+    corrected = await asyncio.to_thread(enrich.correct_spelling, title, artist, SUGGESTION_SIMILARITY)
+    if corrected and (corrected[0], corrected[1]) != (title, artist):
+        typed, similarity = f"{title} — {artist}", round(corrected[2] * 100)
+        title, artist = corrected[0], corrected[1]
+        song = in_catalog(title, artist)
+        if song:
+            return {"ok": True, "in_catalog": True, "song_id": song.id, "title": song.title, "artist": song.artist}
+
+    # Same song already suggested (exactly or nearly) → increment its count
+    proposal, _ = enrich.best_match(title, artist, ((p.title, p.artist, p) for p in db.query(Proposal)),
+                                    SUGGESTION_SIMILARITY)
     if proposal:
         proposal.count += 1
     else:
-        proposal = Proposal(title=title, artist=artist, slug=slug, count=1)
+        slug = _slug_title(title) + "--" + _slug_title(artist)
+        proposal = Proposal(title=title, artist=artist, slug=slug, count=1, typed=typed, similarity=similarity)
         db.add(proposal)
     db.commit()
     # Content-free signal: the interpreter view reloads the list with its token
     await manager.broadcast({"event": "proposals_update"})
-    return {"ok": True}
+    return {"ok": True, "title": proposal.title, "artist": proposal.artist, "corrected": typed is not None}
 
 
 @app.websocket("/ws")
@@ -569,7 +591,8 @@ async def admin_reset_played(db: Session = Depends(get_db), _=Depends(check_admi
 @app.get("/admin/proposals")
 def admin_get_proposals(db: Session = Depends(get_db), _=Depends(check_admin)):
     proposals = db.query(Proposal).order_by(Proposal.count.desc(), Proposal.created_at).all()
-    return [{"id": p.id, "title": p.title, "artist": p.artist, "count": p.count} for p in proposals]
+    return [{"id": p.id, "title": p.title, "artist": p.artist, "count": p.count,
+             "typed": p.typed, "similarity": p.similarity} for p in proposals]
 
 
 @app.post("/admin/proposals/{proposal_id}/add", status_code=201)

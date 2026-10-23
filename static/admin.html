@@ -436,6 +436,12 @@ function renderProposals(proposals) {
     artistText.textContent = p.artist || "(sin artista)";
     titleEl.appendChild(titleText);
     titleEl.appendChild(artistText);
+    if (p.typed) {
+      var typedText = document.createElement("div");
+      typedText.className = "song-row-meta";
+      typedText.textContent = "escrito: " + p.typed + " (" + p.similarity + "%)";
+      titleEl.appendChild(typedText);
+    }
 
     var countEl = document.createElement("div");
     countEl.className = "song-row-votes";

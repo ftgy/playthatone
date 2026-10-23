@@ -13,6 +13,7 @@ Sources:
     photo     Deezer's artist picture
 A result is only kept when its artist matches the requested one.
 """
+import difflib
 import html
 import json
 import logging
@@ -86,6 +87,80 @@ def better_spelling(typed, canonical):
     if typed not in (typed.lower(), typed.upper()) or accent_count(canonical) < accent_count(typed):
         return None
     return canonical
+
+
+def loose(s):
+    """Lowercase words without accents, punctuation, "the" or "&/and/y/et": for similarity."""
+    s = unicodedata.normalize("NFD", (s or "").lower())
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r"^the\s+", "", s)
+    s = re.sub(r"&|\b(?:and|y|et)\b", " ", s)
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", s).split())
+
+
+def similarity(a, b):
+    """0..1, tolerant to typos: "wonderwal" vs "Wonderwall" ≈ 0.95."""
+    return difflib.SequenceMatcher(None, loose(a), loose(b)).ratio()
+
+
+def title_variants(title):
+    # "Wonderwall (Remastered)", "Hotel California - 2013 Remaster" → also without the suffix
+    return {title, re.sub(r"\s*[\(\[].*?[\)\]]", "", title).strip(), re.sub(r"\s+-\s+.*$", "", title).strip()} - {""}
+
+
+def artist_variants(artist):
+    # "Luis Fonsi & Daddy Yankee" → also "Luis Fonsi" (but "Simon & Garfunkel" stays whole if typed so)
+    return {artist, re.split(r"\s+(?:&|feat\.?|ft\.?|featuring|with|x)\s+|,\s*", artist, flags=re.I)[0].strip()} - {""}
+
+
+def song_similarity(title, artist, cand_title, cand_artist):
+    """(score, title as spelled by the candidate, artist as spelled by the candidate).
+
+    The score is the lower of the title and artist similarities, so both must look alike.
+    """
+    if not cand_title or not cand_artist:
+        return 0.0, cand_title, cand_artist
+    t_sim, t_best = max((similarity(title, v), v) for v in title_variants(cand_title))
+    a_sim, a_best = max((similarity(artist, v), v) for v in artist_variants(cand_artist))
+    return min(t_sim, a_sim), t_best, a_best
+
+
+def best_match(title, artist, candidates, threshold):
+    """The candidate (title, artist, item) most similar to the song, if both names reach the threshold.
+
+    Returns (item, score) or (None, best score seen).
+    """
+    best, best_score = None, 0.0
+    for cand_title, cand_artist, item in candidates:
+        score = song_similarity(title, artist, cand_title or "", cand_artist or "")[0]
+        if score > best_score:
+            best, best_score = item, score
+    return (best, best_score) if best_score >= threshold else (None, best_score)
+
+
+def correct_spelling(title, artist, threshold):
+    """Title and artist as a music catalog spells them, if similar enough to what was typed.
+
+    Asks iTunes (keeps accents), then Deezer. Returns (title, artist, score) or None.
+    """
+    term = f"{artist} {title}"
+    sources = (
+        ("https://itunes.apple.com/search?" + urllib.parse.urlencode({"term": term, "entity": "song", "limit": 10}),
+         lambda d: [(r.get("trackName", ""), r.get("artistName", "")) for r in d.get("results", [])]),
+        ("https://api.deezer.com/search?" + urllib.parse.urlencode({"q": term, "limit": 10}),
+         lambda d: [(r.get("title", ""), r.get("artist", {}).get("name", "")) for r in d.get("data", [])]),
+    )
+    for url, parse in sources:
+        try:
+            results = parse(http_json(url, timeout=6) or {})
+        except Exception as exc:
+            logger.warning("Spelling lookup failed (%s): %s", url.split("/")[2], exc)
+            continue
+        scored = [song_similarity(title, artist, t, a) for t, a in results if t and a]
+        if scored:
+            score, best_title, best_artist = max(scored)
+            return (best_title, best_artist, score) if score >= threshold else None
+    return None
 
 
 def title_key(title):

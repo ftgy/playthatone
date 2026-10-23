@@ -142,6 +142,7 @@
     #proposals-list li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     #proposals-list button { font: inherit; font-size: 0.85em; padding: 2px 6px; cursor: pointer; }
     #proposals-list .artist { color: #666; }
+    #proposals-list .typed { display: block; font-size: 0.8em; color: #777; }
     #proposals-list li.added {
       flex-wrap: wrap;
       padding: 4px 6px;
@@ -458,6 +459,13 @@
           artist.className = 'artist';
           artist.textContent = ' — ' + p.artist;
           title.appendChild(artist);
+        }
+        if (p.typed) {
+          // Spelling corrected on the way in: show what the audience actually wrote
+          const typed = document.createElement('span');
+          typed.className = 'typed';
+          typed.textContent = 'escrito: ' + p.typed + ' (' + p.similarity + '%)';
+          title.appendChild(typed);
         }
 
         const btnAdd = document.createElement('button');

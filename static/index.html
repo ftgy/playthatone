@@ -809,10 +809,10 @@
         input.value = '';
         artistInput.value = '';
         if (data.in_catalog) {
-          msg.textContent = "It's already in the list: find it above and vote for it!";
+          msg.textContent = `"${data.title}" by ${data.artist} is already in the list: find it above and vote for it!`;
           return;
         }
-        msg.textContent = 'Thanks!';
+        msg.textContent = data.corrected ? `Thanks! We got it as "${data.title}" by ${data.artist}.` : 'Thanks!';
         setTimeout(() => { if (msg.textContent === 'Thanks!') msg.textContent = ''; }, 2000);
       } catch {
         msg.textContent = 'Error. Try again later.';

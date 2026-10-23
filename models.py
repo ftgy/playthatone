@@ -33,6 +33,8 @@ class Proposal(Base):
     id         = Column(Integer, primary_key=True, index=True)
     title      = Column(String(200), nullable=False)
     artist     = Column(String(200), nullable=True)   # None on suggestions made before it existed
+    typed      = Column(String(400), nullable=True)   # what the audience typed, when the spelling was corrected
+    similarity = Column(Integer, nullable=True)       # % between typed and corrected
     slug       = Column(String(200), nullable=False, index=True)
     count      = Column(Integer, default=1)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
