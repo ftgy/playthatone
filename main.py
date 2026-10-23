@@ -1,5 +1,6 @@
 import asyncio
 import os
+import string
 import json
 import logging
 import re
@@ -55,6 +56,9 @@ def _migrate_db():
             if col not in existing:
                 conn.execute(text(f"ALTER TABLE songs ADD COLUMN {col} {sql_type}"))
                 conn.commit()
+        if "artist" not in [c["name"] for c in sa_inspect(engine).get_columns("proposals")]:
+            conn.execute(text("ALTER TABLE proposals ADD COLUMN artist VARCHAR(200)"))
+            conn.commit()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -231,9 +235,12 @@ def _slug_title(s: str) -> str:
 
 @app.post("/proposals", status_code=201)
 async def create_proposal(body: ProposalCreate, request: Request, db: Session = Depends(get_db)):
-    title = body.title.strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="Título vacío")
+    title, artist = body.title.strip(), body.artist.strip()
+    if not title or not artist:
+        raise HTTPException(status_code=400, detail="Título y artista requeridos")
+    existing = _find_song(db, title, artist)
+    if existing:
+        return {"ok": True, "in_catalog": True, "song_id": existing.id}
 
     # 1 suggestion / 30 s per IP
     ip = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or request.client.host
@@ -242,13 +249,13 @@ async def create_proposal(body: ProposalCreate, request: Request, db: Session = 
         raise HTTPException(status_code=429, detail="Espera un poco antes de sugerir otra")
     _proposal_last_ts[ip] = now
 
-    # Same title already suggested → increment its count
-    slug = _slug_title(title)
+    # Same song already suggested → increment its count
+    slug = _slug_title(title) + "--" + _slug_title(artist)
     proposal = db.query(Proposal).filter(Proposal.slug == slug).first()
     if proposal:
         proposal.count += 1
     else:
-        proposal = Proposal(title=title, slug=slug, count=1)
+        proposal = Proposal(title=title, artist=artist, slug=slug, count=1)
         db.add(proposal)
     db.commit()
     # Content-free signal: the interpreter view reloads the list with its token
@@ -330,15 +337,21 @@ async def _enrich_song(song_id: int):
         if found["lyrics"]:
             return "had"
         lyrics, _, track, artist = await asyncio.to_thread(enrich.find_lyrics, names["artist"], names["title"])
-        if not lyrics:
-            return "not_found"
-        found["lyrics"] = lyrics
-        # Same title/artist apart from case and punctuation: use the source's spelling
+        # Names typed all in lowercase: the source's spelling, else simple capitals
         rename = {}
         for field, canonical in (("title", track), ("artist", artist)):
-            if canonical and canonical != names[field] and enrich.norm(canonical) == enrich.norm(names[field]):
-                rename[field] = (names[field], canonical)
-                names[field] = canonical
+            typed = names[field]
+            better = enrich.better_spelling(typed, canonical)
+            if not better and typed == typed.lower():
+                better = typed[:1].upper() + typed[1:] if field == "title" else string.capwords(typed)
+            if better and better != typed:
+                rename[field] = (typed, better)
+                names[field] = better
+        if not lyrics:
+            if rename:
+                await _save_song(song_id, rename=rename)
+            return "not_found"
+        found["lyrics"] = lyrics
         await _save_song(song_id, fill={"lyrics": lyrics}, rename=rename)
         return "found"
 
@@ -397,22 +410,32 @@ def admin_get_songs(db: Session = Depends(get_db), _=Depends(check_admin)):
     return songs_with_votes(db)
 
 
-@app.post("/admin/songs", status_code=201)
-async def admin_add_song(body: SongCreate, background_tasks: BackgroundTasks,
-                         db: Session = Depends(get_db), _=Depends(check_admin)):
-    data = body.model_dump()
+def _catalog_artist(db: Session, artist: str) -> str:
+    """The catalog's spelling of this artist if already there (one group, one photo)."""
+    for (existing,) in db.query(Song.artist).distinct():
+        if enrich.norm(existing) == enrich.norm(artist):
+            return existing
+    return artist
+
+
+def _find_song(db: Session, title: str, artist: str):
+    artist = _catalog_artist(db, artist)
+    for song in db.query(Song).filter(Song.artist == artist):
+        if enrich.title_key(song.title) == enrich.title_key(title):
+            return song
+    return None
+
+
+async def _add_song(db: Session, background_tasks: BackgroundTasks, data: dict) -> Song:
+    """Create a song and search online for what it is missing."""
     data["title"], data["artist"] = data["title"].strip(), data["artist"].strip()
     if not data["title"] or not data["artist"]:
         raise HTTPException(status_code=400, detail="Titulo y artista requeridos")
-    # Artist already in the catalog: reuse its spelling (one group, one photo)
-    for (existing,) in db.query(Song.artist).distinct():
-        if enrich.norm(existing) == enrich.norm(data["artist"]):
-            data["artist"] = existing
-            break
-    for other in db.query(Song).filter(Song.artist == data["artist"]):
-        if enrich.title_key(other.title) == enrich.title_key(data["title"]):
-            raise HTTPException(status_code=409, detail="Esa cancion ya esta en el catalogo")
-
+    existing = _find_song(db, data["title"], data["artist"])
+    if existing:
+        raise HTTPException(status_code=409, detail={"message": "Esa cancion ya esta en el catalogo",
+                                                     "song_id": existing.id})
+    data["artist"] = _catalog_artist(db, data["artist"])
     song = Song(**data)
     db.add(song)
     db.commit()
@@ -422,6 +445,12 @@ async def admin_add_song(body: SongCreate, background_tasks: BackgroundTasks,
     return song
 
 
+@app.post("/admin/songs", status_code=201)
+async def admin_add_song(body: SongCreate, background_tasks: BackgroundTasks,
+                         db: Session = Depends(get_db), _=Depends(check_admin)):
+    return await _add_song(db, background_tasks, body.model_dump())
+
+
 @app.post("/admin/songs/{song_id}/enrich", status_code=202)
 def admin_enrich_song(song_id: int, background_tasks: BackgroundTasks,
                       db: Session = Depends(get_db), _=Depends(check_admin)):
@@ -429,6 +458,14 @@ def admin_enrich_song(song_id: int, background_tasks: BackgroundTasks,
     if not db.query(Song).filter(Song.id == song_id).first():
         raise HTTPException(status_code=404, detail="Cancion no encontrada")
     _queue_enrich(song_id, background_tasks)
+    return enrich_status[song_id]
+
+
+@app.get("/admin/songs/{song_id}/enrich")
+def admin_enrich_status(song_id: int, _=Depends(check_admin)):
+    """Progress of the online search (kept for an hour after it ends)."""
+    if song_id not in enrich_status:
+        raise HTTPException(status_code=404, detail="Sin busqueda reciente")
     return enrich_status[song_id]
 
 
@@ -532,7 +569,31 @@ async def admin_reset_played(db: Session = Depends(get_db), _=Depends(check_admi
 @app.get("/admin/proposals")
 def admin_get_proposals(db: Session = Depends(get_db), _=Depends(check_admin)):
     proposals = db.query(Proposal).order_by(Proposal.count.desc(), Proposal.created_at).all()
-    return [{"id": p.id, "title": p.title, "count": p.count} for p in proposals]
+    return [{"id": p.id, "title": p.title, "artist": p.artist, "count": p.count} for p in proposals]
+
+
+@app.post("/admin/proposals/{proposal_id}/add", status_code=201)
+async def admin_add_proposal(proposal_id: int, background_tasks: BackgroundTasks,
+                             db: Session = Depends(get_db), _=Depends(check_admin)):
+    """Turn a suggestion into a catalog song (searched online like any new song)."""
+    proposal = db.query(Proposal).filter(Proposal.id == proposal_id).first()
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Sugerencia no encontrada")
+    if not proposal.artist:
+        raise HTTPException(status_code=400, detail="La sugerencia no tiene artista")
+    try:
+        song = await _add_song(db, background_tasks, {"title": proposal.title, "artist": proposal.artist,
+                                                      "position": (db.query(func.max(Song.position)).scalar() or 0) + 1})
+    except HTTPException as exc:
+        if exc.status_code == 409:   # already in the catalog: the suggestion is done anyway
+            db.delete(proposal)
+            db.commit()
+            await manager.broadcast({"event": "proposals_update"})
+        raise
+    db.delete(proposal)
+    db.commit()
+    await manager.broadcast({"event": "proposals_update"})
+    return {"song_id": song.id, "title": song.title, "artist": song.artist, "enrich": enrich_status[song.id]}
 
 
 @app.delete("/admin/proposals/{proposal_id}", status_code=204)

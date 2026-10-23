@@ -267,8 +267,8 @@
       border-radius: 10px;
       background: rgba(255, 255, 255, 0.7);
     }
-    #suggest-box label { font-weight: bold; }
-    #suggest-title { flex: 1; min-width: 160px; font: inherit; padding: 4px 6px; }
+    #suggest-box label { font-weight: bold; flex-basis: 100%; }
+    #suggest-title, #suggest-artist { flex: 1; min-width: 140px; font: inherit; padding: 4px 6px; }
     #suggest-send { font: inherit; padding: 4px 12px; }
     #suggest-msg { flex-basis: 100%; min-height: 1.2em; font-size: 0.95em; }
     #suggest-msg:empty { display: none; }
@@ -350,7 +350,8 @@
 
 <div id="suggest-box">
   <label for="suggest-title">Suggest a song</label>
-  <input id="suggest-title" type="text" maxlength="200" placeholder="Type a title…"/>
+  <input id="suggest-title" type="text" maxlength="200" placeholder="Song" autocomplete="off"/>
+  <input id="suggest-artist" type="text" maxlength="200" placeholder="Artist" autocomplete="off"/>
   <button id="suggest-send" type="button">Send</button>
   <span id="suggest-msg"></span>
 </div>
@@ -782,26 +783,35 @@
   // ── Suggest a song ────────────────────────────────────────────────────────
   (function () {
     const input = document.getElementById('suggest-title');
+    const artistInput = document.getElementById('suggest-artist');
     const btn = document.getElementById('suggest-send');
     const msg = document.getElementById('suggest-msg');
 
     async function send() {
       const title = input.value.trim();
+      const artist = artistInput.value.trim();
       if (!title) { input.focus(); return; }
+      if (!artist) { artistInput.focus(); return; }
       btn.disabled = true;
       msg.textContent = 'Sending…';
       try {
         const res = await fetch('/proposals', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title })
+          body: JSON.stringify({ title, artist })
         });
         if (res.status === 429) {
           msg.textContent = 'Please wait a few seconds before suggesting another one.';
           return;
         }
         if (!res.ok) throw new Error();
+        const data = await res.json();
         input.value = '';
+        artistInput.value = '';
+        if (data.in_catalog) {
+          msg.textContent = "It's already in the list: find it above and vote for it!";
+          return;
+        }
         msg.textContent = 'Thanks!';
         setTimeout(() => { if (msg.textContent === 'Thanks!') msg.textContent = ''; }, 2000);
       } catch {
@@ -812,7 +822,8 @@
     }
 
     btn.addEventListener('click', send);
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') artistInput.focus(); });
+    artistInput.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
   })();
 
   window.addEventListener('resize', fitSongLabels);

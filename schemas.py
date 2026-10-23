@@ -46,3 +46,4 @@ class SongOut(BaseModel):
 
 class ProposalCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
+    artist: str = Field(min_length=1, max_length=200)

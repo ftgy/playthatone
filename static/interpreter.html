@@ -141,6 +141,19 @@
     #proposals-list li { display: flex; gap: 6px; align-items: center; }
     #proposals-list li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     #proposals-list button { font: inherit; font-size: 0.85em; padding: 2px 6px; cursor: pointer; }
+    #proposals-list .artist { color: #666; }
+    #proposals-list li.added {
+      flex-wrap: wrap;
+      padding: 4px 6px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      background: #fff;
+      cursor: pointer;
+      user-select: none;
+    }
+    #proposals-list li.added.selected { background-color: var(--selected); }
+    #proposals-list .added-status { flex-basis: 100%; font-size: 0.8em; color: #555; }
+    #proposals-list .added-status.running { color: #a67c00; }
 
     @media (max-width: 700px) {
       #top-bar { flex-wrap: wrap; }
@@ -232,6 +245,7 @@
     let nowPlayingId = null;
     let selectedId = null;      // 1st tap = preview, 2nd tap = "now playing"
     let displayedKey = null;    // avoid jumping to the top on every vote update
+    let added = [];             // suggestions added to the catalog: {id, title, artist, status}
 
     const tabSection = document.getElementById('tab-section');
     const tabContent = document.getElementById('tab-content');
@@ -246,7 +260,14 @@
     async function api(path, method = 'GET') {
       const res = await fetch(path, { method, headers: { Authorization: 'Bearer ' + token } });
       if (res.status === 401) throw new Error('unauthorized');
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        let detail = null;
+        try { detail = (await res.json()).detail; } catch {}
+        const err = new Error(detail && (detail.message || detail) || 'HTTP ' + res.status);
+        err.status = res.status;
+        err.detail = detail;
+        throw err;
+      }
       return res.status === 204 ? null : res.json();
     }
 
@@ -309,6 +330,7 @@
       if (selectedId !== id) {
         selectedId = id;
         renderRanking();
+        renderAdded();
         renderMain();
         return;
       }
@@ -328,17 +350,102 @@
       const selected = songs.find(s => s.id === selectedId);
       if (!selected || selected.state) selectedId = null;
       renderRanking();
+      renderAdded();
       renderMain();
     }
 
     // ── Suggestions ──────────────────────────────────────────────────────────
+    // "Añadir" adds the suggested song to the catalog; the server then searches
+    // online for its lyrics, chords, info and photo (same as the Panel de control).
+    const STEP_LABELS = { lyrics: 'letra', chords: 'acordes', info: 'info', photo: 'foto' };
+    const STEP_MARKS = { pending: '·', searching: '…', found: '✓', partial: '~', had: '✓', not_found: '✗', error: '⚠' };
+
+    function describeStatus(item) {
+      if (item.note) return item.note;
+      const st = item.status;
+      if (!st) return 'Toca para ver, toca otra vez para tocarla';
+      const steps = Object.keys(STEP_LABELS).map(k => STEP_LABELS[k] + ' ' + (STEP_MARKS[st[k]] || '?')).join(' · ');
+      return st.running ? 'Buscando: ' + steps : steps + ' · toca para ver';
+    }
+
+    function saveAdded() {
+      storage.set('pto-added', JSON.stringify(added.map(({ id, title, artist }) => ({ id, title, artist }))));
+    }
+
+    function renderAdded() {
+      const list = document.getElementById('proposals-list');
+      list.querySelectorAll('li.added, li.empty').forEach(li => li.remove());
+      // Songs deleted from the catalog disappear from this list too
+      added = added.filter(item => !songs.length || songs.some(s => s.id === item.id));
+      [...added].reverse().forEach(item => {
+        const song = songs.find(s => s.id === item.id) || item;
+        const li = document.createElement('li');
+        li.className = 'added' + (item.id === selectedId ? ' selected' : '');
+        const title = document.createElement('span');
+        title.textContent = song.title + ' — ' + song.artist;
+        const btnDismiss = document.createElement('button');
+        btnDismiss.type = 'button';
+        btnDismiss.textContent = '✕';
+        btnDismiss.title = 'Quitar de esta lista (sigue en el catálogo)';
+        btnDismiss.onclick = e => {
+          e.stopPropagation();
+          added = added.filter(a => a !== item);
+          saveAdded();
+          renderAdded();
+        };
+        const status = document.createElement('span');
+        status.className = 'added-status' + (item.status && item.status.running ? ' running' : '');
+        status.textContent = describeStatus(item);
+        li.append(title, btnDismiss, status);
+        li.onclick = () => handleClick(item.id);
+        list.prepend(li);
+      });
+      if (!list.children.length) list.innerHTML = '<li class="empty">Ninguna sugerencia.</li>';
+    }
+
+    async function pollStatus(item) {
+      while (added.includes(item)) {
+        try {
+          item.status = await api(`/admin/songs/${item.id}/enrich`);
+        } catch {
+          item.status = null;   // no recent search (e.g. after a server restart)
+        }
+        renderAdded();
+        if (!item.status || !item.status.running) return;
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+
+    async function addProposal(p, button) {
+      button.disabled = true;
+      button.textContent = '…';
+      let item;
+      try {
+        const res = await api(`/admin/proposals/${p.id}/add`, 'POST');
+        item = { id: res.song_id, title: res.title, artist: res.artist, status: res.enrich };
+      } catch (e) {
+        if (e.status === 409 && e.detail && e.detail.song_id) {
+          item = { id: e.detail.song_id, title: p.title, artist: p.artist, note: 'Ya estaba en el catálogo · toca para ver' };
+        } else {
+          button.disabled = false;
+          button.textContent = 'Añadir';
+          button.title = e.message;
+          return;
+        }
+      }
+      added = added.filter(a => a.id !== item.id).concat(item);
+      saveAdded();
+      renderAdded();
+      if (!item.note) pollStatus(item);
+    }
+
     async function loadProposals() {
       const list = document.getElementById('proposals-list');
       let proposals;
       try { proposals = await api('/admin/proposals'); } catch { return; }
 
       list.innerHTML = '';
-      if (!proposals.length) {
+      if (!proposals.length && !added.length) {
         list.innerHTML = '<li class="empty">Ninguna sugerencia.</li>';
         return;
       }
@@ -346,12 +453,27 @@
         const li = document.createElement('li');
         const title = document.createElement('span');
         title.textContent = p.title + (p.count > 1 ? '  (x' + p.count + ')' : '');
+        if (p.artist) {
+          const artist = document.createElement('span');
+          artist.className = 'artist';
+          artist.textContent = ' — ' + p.artist;
+          title.appendChild(artist);
+        }
+
+        const btnAdd = document.createElement('button');
+        btnAdd.type = 'button';
+        btnAdd.textContent = 'Añadir';
+        btnAdd.title = 'Añadir al catálogo y buscar letra, acordes y foto';
+        btnAdd.disabled = !p.artist;
+        if (!p.artist) btnAdd.title = 'Sugerencia sin artista: añádela desde el Panel de control';
+        btnAdd.onclick = () => addProposal(p, btnAdd);
 
         const btnSearch = document.createElement('button');
         btnSearch.type = 'button';
         btnSearch.textContent = 'Buscar';
-        btnSearch.onclick = () => window.open(
-          'https://www.google.com/search?q=' + encodeURIComponent(p.title + ' chords'), '_blank');
+        btnSearch.title = 'Buscar los acordes en Google';
+        btnSearch.onclick = () => window.open('https://www.google.com/search?q=' +
+          encodeURIComponent(p.title + ' ' + (p.artist || '') + ' chords'), '_blank');
 
         const btnDel = document.createElement('button');
         btnDel.type = 'button';
@@ -359,10 +481,18 @@
         btnDel.title = 'Descartar';
         btnDel.onclick = () => api('/admin/proposals/' + p.id, 'DELETE').catch(() => {});
 
-        li.append(title, btnSearch, btnDel);
+        li.append(title, btnAdd, btnSearch, btnDel);
         list.appendChild(li);
       });
+      renderAdded();
     }
+
+    // Songs added before a reload (per device)
+    try {
+      added = JSON.parse(storage.get('pto-added') || '[]')
+        .filter(a => a && Number.isInteger(a.id))
+        .map(a => ({ id: a.id, title: String(a.title || ''), artist: String(a.artist || ''), status: null }));
+    } catch { added = []; }
 
     // ── WebSocket ────────────────────────────────────────────────────────────
     function connectWS() {
@@ -460,6 +590,7 @@
         document.getElementById('admin-lock').classList.remove('open');
         applySongs(stats.songs);
         loadProposals();
+        added.forEach(pollStatus);
         connectWS();
       } catch {
         storage.remove('pto-admin-token');

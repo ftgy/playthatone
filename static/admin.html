@@ -428,21 +428,39 @@ function renderProposals(proposals) {
     row.className = "proposal-row";
 
     var titleEl = document.createElement("div");
-    titleEl.className = "song-row-title";
-    titleEl.textContent = p.title;
+    var titleText = document.createElement("div");
+    titleText.className = "song-row-title";
+    titleText.textContent = p.title;
+    var artistText = document.createElement("div");
+    artistText.className = "song-row-artist";
+    artistText.textContent = p.artist || "(sin artista)";
+    titleEl.appendChild(titleText);
+    titleEl.appendChild(artistText);
 
     var countEl = document.createElement("div");
     countEl.className = "song-row-votes";
     countEl.textContent = "x" + p.count;
 
-    // Pre-fill the "Anadir cancion" form
     var btnAdd = document.createElement("button");
     btnAdd.className = "btn-sm";
     btnAdd.textContent = "+ Catalogo";
-    btnAdd.addEventListener("click", function() {
-      document.getElementById("new-title").value = p.title;
-      document.getElementById("new-artist").focus();
-      document.getElementById("new-artist").scrollIntoView({ behavior: "smooth", block: "center" });
+    btnAdd.addEventListener("click", async function() {
+      if (!p.artist) {
+        // Old suggestion without artist: pre-fill the "Anadir cancion" form
+        document.getElementById("new-title").value = p.title;
+        document.getElementById("new-artist").focus();
+        document.getElementById("new-artist").scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      try {
+        await api("/admin/proposals/" + p.id + "/add", "POST");
+        showToast("Cancion anadida: buscando letra, acordes y foto...");
+      } catch(e) {
+        var detail = "";
+        try { detail = JSON.parse(e.message).detail; } catch(_) {}
+        showToast((detail && (detail.message || detail)) || "Error al anadir");
+      }
+      await loadStats();
     });
 
     var btnDelete = document.createElement("button");
@@ -563,6 +581,7 @@ async function addSong() {
     console.error("addSong error:", err);
     var detail = "";
     try { detail = JSON.parse(err.message).detail; } catch(_) {}
+    if (detail && detail.message) detail = detail.message;
     showToast(typeof detail === "string" && detail ? detail : "Error al anadir");
   }
 }

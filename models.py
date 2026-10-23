@@ -32,6 +32,7 @@ class Proposal(Base):
 
     id         = Column(Integer, primary_key=True, index=True)
     title      = Column(String(200), nullable=False)
+    artist     = Column(String(200), nullable=True)   # None on suggestions made before it existed
     slug       = Column(String(200), nullable=False, index=True)
     count      = Column(Integer, default=1)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

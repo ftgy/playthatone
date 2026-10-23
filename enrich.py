@@ -71,6 +71,23 @@ def same_artist(a, b):
     return bool(a) and (a == b or a in b or b in a)
 
 
+def accent_count(s):
+    return sum(unicodedata.combining(c) > 0 for c in unicodedata.normalize("NFD", s))
+
+
+def better_spelling(typed, canonical):
+    """The source's spelling of a name typed carelessly (all lowercase/uppercase), or None.
+
+    Never replaces a name typed with capitals, nor one that would lose its accents
+    ("Me gustas tú" stays, even if the source says "Me Gustas Tu").
+    """
+    if not canonical or canonical == typed or norm(canonical) != norm(typed):
+        return None
+    if typed not in (typed.lower(), typed.upper()) or accent_count(canonical) < accent_count(typed):
+        return None
+    return canonical
+
+
 def title_key(title):
     # "Knocking" and "Knockin'" are the same song
     return norm(re.sub(r"ing\b", "in", title.lower()))
@@ -214,7 +231,8 @@ def ug_fetch_tab(url):
         logger.error("UG fetch error for %s: %s", url, exc)
         return ""
     # Clean up the UG format: [ch]Am[/ch] → Am, [tab]...[/tab] → ...
-    content = content.replace("\r\n", "\n")
+    # Some tab authors type HTML entities ("Music &amp; Lyrics")
+    content = html.unescape(content.replace("\r\n", "\n"))
     content = re.sub(r"\[ch\](.*?)\[/ch\]", r"\1", content)
     content = re.sub(r"\[/?tab\]", "", content)
     return content.strip()
