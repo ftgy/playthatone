@@ -1,487 +1,678 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>__PlayThatOne__</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Special+Elite&family=Share+Tech+Mono&display=swap');
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Play That One!</title>
+  <style>
+    :root {
+      --voted-green: #32cd32;
+      --selected: orange;
+      --border: #ccc;
+      --band: #f1f5ff;
+    }
 
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #000;
+      background: #fff url('/static/images/fondo_horizontal.jpg') no-repeat center center fixed;
+      background-size: cover;
+    }
+    @media (orientation: portrait) {
+      body { background-image: url('/static/images/fondo_vertical.jpg'); }
+    }
 
-  :root {
-    --black: #0a0a0a;
-    --white: #f0ece4;
-    --mid: #888;
-    --bg: #0a0a0a;
-    --fg: #f0ece4;
-    --border: #222;
-    --card: #0d0d0d;
-    --card-hover: #1a1a1a;
-  }
+    /* ── Banner ── */
+    .banner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 20px;
+      background-color: #222;
+      color: #fff;
+    }
+    .banner img { max-height: 50px; }
+    .banner-title {
+      flex-grow: 1;
+      text-align: center;
+      font-size: 2em;
+      letter-spacing: 1px;
+    }
 
-  :root.light {
-    --bg: #f0ece4;
-    --fg: #0a0a0a;
-    --border: #ccc;
-    --card: #e8e4dc;
-    --card-hover: #ddd8d0;
-    --mid: #666;
-    --white: #0a0a0a;
-    --black: #f0ece4;
-  }
+    /* ── Lyrics ── */
+    #lyrics-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      background: #f0f0f0;
+      padding: 6px 12px;
+      font-weight: bold;
+      border-bottom: 1px solid var(--border);
+    }
+    #lyrics-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #lyrics-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    #back-to-now {
+      font: inherit;
+      font-size: 0.85em;
+      padding: 2px 8px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #toggle-lyrics {
+      cursor: pointer;
+      font-size: 1.2em;
+      background: none;
+      border: none;
+      padding: 0 4px;
+    }
+    #lyrics-container {
+      padding: 20px;
+      white-space: pre-line;
+      font-size: 1.1em;
+      min-height: 120px;
+      max-height: 45vh;
+      overflow-y: auto;
+    }
+    #lyrics-container.collapsed { display: none; }
+    #lyrics-container .section-header { font-weight: bold; color: #555; }
+    .muted { color: #555; }
 
-  body {
-    background: var(--bg);
-    color: var(--fg);
-    font-family: 'Share Tech Mono', monospace;
-    min-height: 100vh;
-    overflow-x: hidden;
-    cursor: crosshair;
-  }
+    /* ── Live ranking ── */
+    h1 { margin: 20px; }
+    #ranking-box {
+      border: 2px solid #999;
+      padding: 16px;
+      margin: 0 20px 20px;
+      border-radius: 12px;
+    }
+    #ranking-top3, #ranking-rest {
+      display: flex;
+      flex-direction: column;
+      margin: 0;
+      padding: 0;
+    }
+    #ranking-top3 { gap: 12px; }
+    #ranking-rest { gap: 8px; max-height: 400px; overflow-y: auto; }
+    #ranking-top3:not(:empty) + #ranking-rest:not(:empty) { margin-top: 12px; }
+    #ranking-box li {
+      list-style: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 18px;
+      font-size: 1.1em;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background-color: #fff;
+      cursor: pointer;
+    }
+    #ranking-top3 li.top1 { font-size: 1.4em; font-weight: bold; }
+    #ranking-top3 li.top2 { font-size: 1.25em; }
+    #ranking-top3 li.top3 { font-size: 1.15em; }
+    #ranking-empty { margin: 0; }
 
-  body::before {
-    content: '';
-    position: fixed; inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.05'/%3E%3C/svg%3E");
-    pointer-events: none; z-index: 100; opacity: 0.4;
-  }
+    /* ── Vote a song ── */
+    #songs-container {
+      column-count: 1;
+      column-gap: 20px;
+      padding: 10px 20px 40px;
+    }
+    @media (min-width: 600px)  { #songs-container { column-count: 2; } }
+    @media (min-width: 1000px) { #songs-container { column-count: 3; } }
 
-  header {
-    border-bottom: 1px solid var(--border);
-    padding: 2rem;
-    display: flex; align-items: center; justify-content: space-between; gap: 1.5rem;
-  }
+    .group {
+      position: relative;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 10px;
+      padding: 5px;
+      break-inside: avoid;
+    }
+    /* Pastel band behind the artist name */
+    .group::before {
+      content: "";
+      position: absolute;
+      left: 0; right: 0; top: 4px;
+      height: 2.4em;
+      background: var(--band);
+      border-radius: 6px;
+      pointer-events: none;
+    }
+    .group-left { position: relative; flex: 1; min-width: 0; padding-right: 10px; }
+    .group-right {
+      position: relative;
+      flex: 0 0 25%;
+      display: flex;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .group-right img {
+      max-width: 100%;
+      max-height: calc(2.4em + 38px);
+      object-fit: contain;
+      border-radius: 4px;
+    }
+    .group h3 {
+      margin: 0 0 4px;
+      padding: 6px 10px;
+      font-size: 1.15em;
+      color: #333;
+    }
 
-  .logo {
-    font-family: 'Special Elite', cursive;
-    font-size: clamp(1.8rem, 5vw, 3rem);
-    letter-spacing: -0.02em; line-height: 1;
-  }
-  .logo span { color: var(--mid); }
+    .song {
+      box-sizing: border-box;
+      width: 100%;
+      height: 34px;
+      margin: 4px 0;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2em;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      background-color: #fff;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      user-select: none;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
 
-  .tagline {
-    font-size: 0.7rem; color: var(--mid);
-    letter-spacing: 0.15em; text-transform: uppercase;
-  }
+    .song.selected, #ranking-box li.selected { background-color: var(--selected); }
+    .song.voted, #ranking-box li.voted { background-color: var(--voted-green); }
+    .song.unvote, #ranking-box li.unvote { outline: 3px dashed #c00; outline-offset: -3px; }
 
-  .live-dot {
-    width: 8px; height: 8px; background: var(--white);
-    border-radius: 50%; display: inline-block;
-    margin-right: 6px; animation: pulse 1.5s infinite;
-  }
-  .live-dot.disconnected { background: #444; animation: none; }
+    #votes-left { margin: -8px 20px 14px; font-size: 0.95em; }
+    #votes-left .dot { color: var(--voted-green); font-size: 1.3em; letter-spacing: 2px; }
+    #votes-left .dot.used { color: #aaa; }
+    .song.played {
+      opacity: 0.4;
+      text-decoration: line-through;
+      background-color: pink;
+      pointer-events: none;
+    }
 
-  @keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50%       { opacity: 0.3; transform: scale(0.7); }
-  }
+    /* ── Suggest a song ── */
+    #suggest-box {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 10px;
+      max-width: 600px;
+      margin: 16px auto;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.7);
+    }
+    #suggest-box label { font-weight: bold; }
+    #suggest-title { flex: 1; min-width: 160px; font: inherit; padding: 4px 6px; }
+    #suggest-send { font: inherit; padding: 4px 12px; }
+    #suggest-msg { flex-basis: 100%; min-height: 1.2em; font-size: 0.95em; }
+    #suggest-msg:empty { display: none; }
 
-  main { max-width: 900px; margin: 0 auto; padding: 2rem; }
+    /* ── Footer ── */
+    footer {
+      margin-top: 40px;
+      padding: 20px;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      font-size: 1.1em;
+      line-height: 2;
+    }
+    footer a { font-weight: bold; margin: 0 10px; }
 
-  .section-label {
-    font-size: 0.65rem; letter-spacing: 0.3em; text-transform: uppercase;
-    color: var(--mid); margin-bottom: 1.5rem;
-    display: flex; align-items: center; gap: 1rem;
-  }
-  .section-label::after { content: ''; flex: 1; height: 1px; background: #222; }
+    /* ── Toast ── */
+    #toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translate(-50%, 20px);
+      max-width: calc(100% - 32px);
+      padding: 10px 18px;
+      background: #222;
+      color: #fff;
+      border-radius: 8px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
-  /* VOTE */
-  #vote-section { margin-bottom: 4rem; }
-
-  .song-card {
-    border: 1px solid var(--border); padding: 1.5rem; margin-bottom: 1px;
-    display: grid; grid-template-columns: 56px 1fr auto auto;
-    align-items: center; gap: 1.5rem;
-    position: relative; overflow: hidden;
-    transition: border-color 0.15s;
-  }
-
-  .artist-thumb-wrap {
-    width: 56px; height: 56px; flex-shrink: 0;
-    background: var(--card); border: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: center;
-    overflow: hidden; font-size: 1.4rem; color: var(--border);
-  }
-  .artist-thumb {
-    width: 100%; height: 100%; object-fit: cover; display: none;
-  }
-  .artist-thumb.loaded { display: block; }
-  .song-card::before {
-    content: ''; position: absolute; left: 0; top: 0; bottom: 0;
-    width: 0; background: var(--card-hover); transition: width 0.4s ease; z-index: 0;
-  }
-  .song-card:hover { border-color: var(--mid); }
-  .song-card:hover::before { width: 100%; }
-  .song-card > * { position: relative; z-index: 1; }
-  .song-card.leading { border-color: var(--mid); }
-
-  .song-number { font-size: 0.6rem; color: var(--mid); letter-spacing: 0.1em; }
-  .song-title { font-family: 'Special Elite', cursive; font-size: 1.3rem; letter-spacing: 0.02em; }
-  .song-artist { font-size: 0.7rem; color: var(--mid); margin-top: 0.2rem; letter-spacing: 0.05em; }
-
-  .vote-bar-wrap { width: 120px; display: flex; flex-direction: column; gap: 4px; }
-  .vote-bar-bg { height: 2px; background: #222; position: relative; }
-  .vote-bar-fill {
-    position: absolute; left: 0; top: 0; bottom: 0;
-    background: var(--white); transition: width 0.5s ease;
-  }
-  .vote-count { font-size: 0.65rem; color: var(--mid); letter-spacing: 0.1em; }
-
-  .btn-vote {
-    background: transparent; border: 1px solid #333; color: var(--white);
-    font-family: 'Share Tech Mono', monospace; font-size: 0.7rem;
-    letter-spacing: 0.15em; text-transform: uppercase;
-    padding: 0.5rem 1rem; cursor: pointer; transition: all 0.15s;
-    white-space: nowrap;
-  }
-  .btn-vote:hover:not(:disabled), .btn-vote.voted {
-    background: var(--white); color: var(--black); border-color: var(--white);
-  }
-  .btn-vote:disabled { opacity: 0.4; cursor: default; }
-
-  .leading-badge {
-    font-size: 0.55rem; letter-spacing: 0.2em; text-transform: uppercase;
-    color: var(--mid); border: 1px solid #333; padding: 0.2rem 0.5rem; margin-left: 0.5rem;
-  }
-
-  /* LYRICS */
-  #lyrics-section { margin-bottom: 3rem; }
-
-  .song-selector { display: flex; gap: 1px; margin-bottom: 2rem; flex-wrap: wrap; }
-
-  .btn-song-sel {
-    background: transparent; border: 1px solid #222; color: var(--mid);
-    font-family: 'Share Tech Mono', monospace; font-size: 0.7rem;
-    letter-spacing: 0.1em; padding: 0.6rem 1.2rem; cursor: pointer;
-    transition: all 0.15s; text-transform: uppercase;
-  }
-  .btn-song-sel:hover, .btn-song-sel.active {
-    background: var(--white); color: var(--black); border-color: var(--white);
-  }
-
-  .lyrics-display {
-    border: 1px solid var(--border); padding: 2rem;
-    min-height: 200px; background: var(--card);
-  }
-
-  .lyrics-placeholder {
-    color: var(--mid); font-size: 0.75rem; letter-spacing: 0.1em;
-    text-align: center; margin-top: 3rem; text-transform: uppercase;
-  }
-
-  .lyrics-song-title {
-    font-family: 'Special Elite', cursive; font-size: 1.5rem;
-    margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);
-  }
-
-  .lyrics-text {
-    font-family: 'Special Elite', cursive;
-    font-size: 1.1rem; line-height: 2.2; white-space: pre-line;
-    letter-spacing: 0.02em;
-  }
-
-  /* Sections de paroles */
-  .lyrics-text .section-header {
-    font-size: 0.65rem; letter-spacing: 0.25em; text-transform: uppercase;
-    color: var(--mid); margin-top: 1.5rem; margin-bottom: 0.3rem;
-    display: block;
-  }
-
-  .lyrics-coming-soon {
-    color: var(--mid); font-size: 0.8rem; letter-spacing: 0.2em;
-    text-transform: uppercase; text-align: center; padding: 3rem 0;
-  }
-
-  footer {
-    border-top: 1px solid var(--border); padding: 1.5rem 2rem;
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 0.6rem; color: #333; letter-spacing: 0.1em; text-transform: uppercase;
-  }
-
-  .toast {
-    position: fixed; bottom: 2rem; right: 2rem;
-    background: var(--white); color: var(--black);
-    padding: 0.8rem 1.5rem; font-family: 'Share Tech Mono', monospace;
-    font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase;
-    transform: translateY(100px); opacity: 0;
-    transition: all 0.3s ease; z-index: 200;
-  }
-  .toast.show { transform: translateY(0); opacity: 1; }
-
-  @media (max-width: 600px) {
-    .song-card { grid-template-columns: 48px 1fr auto; }
-    .artist-thumb-wrap { width: 48px; height: 48px; }
-    .vote-bar-wrap { display: none; }
-  }
-</style>
+    @media (max-width: 480px) {
+      .banner { padding: 10px 12px; }
+      .banner-title { font-size: 1.5em; }
+      .banner img { max-height: 40px; }
+      h1 { margin: 16px 12px; }
+      #ranking-box { margin: 0 12px 16px; padding: 12px; }
+      #songs-container { padding: 10px 12px 32px; }
+      #suggest-box { margin: 16px 12px; }
+    }
+  </style>
 </head>
 <body>
 
-<header>
-  <div style="flex:1">
-    <div class="logo">PlayThatOne</div>
-    <div class="tagline" style="margin-top:0.5rem">
-      <span class="live-dot" id="live-dot"></span>
-      <span id="live-label">Conectando...</span>
-    </div>
-  </div>
-  <button class="btn-theme" id="btn-theme" title="Cambiar tema">◐</button>
-</header>
+<div class="banner">
+  <img alt="Play That One logo" src="/static/images/logo.png"/>
+  <div class="banner-title">Play That One!</div>
+  <img alt="Event logo" src="/static/images/event-logo.jpg"/>
+</div>
 
-<main>
-  <section id="vote-section">
-    <div class="section-label">Próxima canción — elige tú</div>
-    <div id="song-list"><div style="color:#444;font-size:0.75rem;letter-spacing:0.1em">Cargando...</div></div>
-  </section>
+<div id="lyrics-header">
+  <span id="lyrics-title">Now Playing</span>
+  <span id="lyrics-actions">
+    <button id="back-to-now" type="button" hidden>↩ Now playing</button>
+    <button id="toggle-lyrics" type="button" aria-label="Show or hide lyrics">▲</button>
+  </span>
+</div>
+<div id="lyrics-container" class="muted">Tap a song to see its lyrics. Tap it again to vote.</div>
 
-  <section id="lyrics-section">
-    <div class="section-label">Canta con nosotros</div>
-    <div class="song-selector" id="lyric-selector"></div>
-    <div class="lyrics-display" id="lyrics-display">
-      <div class="lyrics-placeholder">← Elige una canción para ver la letra</div>
-    </div>
-  </section>
-</main>
+<h1>Live Ranking</h1>
+<div id="ranking-box">
+  <ul id="ranking-top3"></ul>
+  <ul id="ranking-rest"></ul>
+  <p id="ranking-empty" class="muted">No votes yet — be the first!</p>
+</div>
+
+<h1>Vote a Song</h1>
+<p id="votes-left"></p>
+<div id="songs-container"></div>
+
+<div id="suggest-box">
+  <label for="suggest-title">Suggest a song</label>
+  <input id="suggest-title" type="text" maxlength="200" placeholder="Type a title…"/>
+  <button id="suggest-send" type="button">Send</button>
+  <span id="suggest-msg"></span>
+</div>
 
 <footer>
-  <span>__PlayThatOne__</span>
-  <div class="footer-actions">
-    <span style="opacity:0.5">Support</span>
-    <button class="btn-bizum" id="btn-bizum" title="Copiar numero Bizum">
-      ♪ Bizum
-    </button>
-  </div>
+  <a href="/static/pto.html" target="_blank">PTO: El Proyecto</a>
+  <span>Donaciones a PTO: <strong>Tel</strong> <span id="pto-phone">0034658327204</span></span>
+  <button id="copy-phone" type="button">Copiar</button>
+  <a href="https://www.instagram.com/playthatone" target="_blank">Instagram PTO</a>
 </footer>
 
-<div class="toast" id="toast"></div>
+<div id="toast"></div>
 
 <script>
-  // ── State ──────────────────────────────────────────────────────────────────
+  // ── State ───────────────────────────────────────────────────────────────────
   let songs = [];
-  let votedIds = new Set();   // IDs des chansons déjà votées cette session
-  let selectedLyricId = null;
+  let votedIds = new Set();   // songs this session already voted for
+  let voteLimit = 3;          // votes on unplayed songs; one comes back when its song is played
+  let selectedId = null;      // 1st tap = select, 2nd tap = vote (or take the vote back)
+  let nowPlayingId = null;
+  let lyricsSongId = null;    // song shown in the bar (null = follow "now playing")
   let ws = null;
-  const artistPhotos = {};    // cache : artist → url (ou null si introuvable)
 
-  // ── Artist photos (Deezer, gratuit, pas de clé) ───────────────────────────
-  function esc(str) {
-    const d = document.createElement('div');
-    d.textContent = str;
-    return d.innerHTML;
+  const isPlayed = song => song.state === 'now_playing' || song.state === 'played';
+
+  // ── Artist photos: local image, else Deezer ───────────────────────────
+  const deezerCache = {};
+
+  function setArtistPhoto(artist, container) {
+    const img = document.createElement('img');
+    img.alt = artist;
+    img.loading = 'lazy';
+    img.src = '/static/images/artist/' + encodeURIComponent(artist) + '.jpg';
+    img.onerror = async () => {
+      img.onerror = null;
+      const pic = await deezerPhoto(artist);
+      if (pic) img.src = pic; else img.remove();
+    };
+    container.appendChild(img);
   }
 
-  async function loadArtistPhoto(artist, imgEl) {
-    if (artistPhotos[artist] !== undefined) {
-      if (artistPhotos[artist]) {
-        imgEl.src = artistPhotos[artist];
-        imgEl.onload = () => imgEl.classList.add('loaded');
+  async function deezerPhoto(artist) {
+    if (!(artist in deezerCache)) {
+      deezerCache[artist] = fetch(
+        'https://api.deezer.com/search/artist?q=' + encodeURIComponent(artist) + '&limit=1&output=json'
+      ).then(r => r.json())
+       .then(d => (d.data && d.data[0] && (d.data[0].picture_medium || d.data[0].picture_small)) || null)
+       .catch(() => null);
+    }
+    return deezerCache[artist];
+  }
+
+  // ── Render: list by artist ─────────────────────────────────────────────
+  function renderSongs() {
+    const container = document.getElementById('songs-container');
+    const groups = {};
+    songs.forEach(s => (groups[s.artist] = groups[s.artist] || []).push(s));
+
+    container.innerHTML = '';
+    Object.keys(groups).sort((a, b) => a.localeCompare(b)).forEach(artist => {
+      const group = document.createElement('div');
+      group.className = 'group';
+
+      const left = document.createElement('div');
+      left.className = 'group-left';
+      const h3 = document.createElement('h3');
+      h3.textContent = artist;
+      left.appendChild(h3);
+
+      groups[artist]
+        .sort((a, b) => a.title.localeCompare(b.title))
+        .forEach(song => {
+          const div = document.createElement('div');
+          div.className = 'song';
+          div.dataset.id = song.id;
+          div.textContent = song.title;
+          div.title = song.title;
+          div.onclick = () => handleClick(song.id);
+          left.appendChild(div);
+        });
+
+      const right = document.createElement('div');
+      right.className = 'group-right';
+      setArtistPhoto(artist, right);
+
+      group.append(left, right);
+      container.appendChild(group);
+    });
+
+    fitSongLabels();
+    markAll();
+  }
+
+  // ── Render: live ranking ──────────────────────────────────────────
+  function renderRanking() {
+    const ranked = songs.filter(s => s.votes > 0 && !isPlayed(s)).sort((a, b) => b.votes - a.votes);
+    const top3 = document.getElementById('ranking-top3');
+    const rest = document.getElementById('ranking-rest');
+    top3.innerHTML = '';
+    rest.innerHTML = '';
+    document.getElementById('ranking-empty').hidden = ranked.length > 0;
+
+    ranked.forEach((song, i) => {
+      const li = document.createElement('li');
+      li.dataset.id = song.id;
+      if (i < 3) li.className = 'top' + (i + 1);
+      const title = document.createElement('span');
+      title.textContent = song.title;
+      const count = document.createElement('span');
+      count.textContent = song.votes;
+      li.append(title, count);
+      li.onclick = () => handleClick(song.id);
+      (i < 3 ? top3 : rest).appendChild(li);
+    });
+    markAll();
+  }
+
+  // Apply selected / voted / played colors everywhere (list + ranking)
+  function markAll() {
+    const played = new Set(songs.filter(isPlayed).map(s => s.id));
+    document.querySelectorAll('[data-id]').forEach(el => {
+      const id = Number(el.dataset.id);
+      const isDone = played.has(id);
+      el.classList.toggle('played', isDone);
+      el.classList.toggle('voted', !isDone && votedIds.has(id));
+      el.classList.toggle('selected', !isDone && !votedIds.has(id) && selectedId === id);
+      el.classList.toggle('unvote', !isDone && votedIds.has(id) && selectedId === id);
+    });
+    renderVotesLeft();
+  }
+
+  function votesLeft() {
+    const active = songs.filter(s => votedIds.has(s.id) && !isPlayed(s)).length;
+    return Math.max(0, voteLimit - active);
+  }
+
+  function renderVotesLeft() {
+    const left = votesLeft();
+    const box = document.getElementById('votes-left');
+    box.innerHTML = '<span class="dot">' + '●'.repeat(left) + '</span>' +
+                    '<span class="dot used">' + '●'.repeat(voteLimit - left) + '</span> ';
+    box.append(left === 0
+      ? 'No votes left. You get one back each time one of your songs is played.'
+      : left + (left === 1 ? ' vote' : ' votes') + ' left');
+  }
+
+  // Shrink the font of titles too long to fit in the button
+  function fitSongLabels() {
+    document.querySelectorAll('.song').forEach(el => {
+      el.style.fontSize = '';
+      let size = parseFloat(getComputedStyle(el).fontSize) || 19;
+      while (el.scrollWidth > el.clientWidth && size > 11) {
+        size -= 1;
+        el.style.fontSize = size + 'px';
       }
+    });
+  }
+
+  // ── "Now Playing" bar ───────────────────────────────────────────────────
+  let lyricsShown = null;     // avoid re-rendering (and jumping to the top) for no reason
+
+  function renderLyricsBar() {
+    const box = document.getElementById('lyrics-container');
+    const title = document.getElementById('lyrics-title');
+    const nowPlaying = songs.find(s => s.id === nowPlayingId);
+    const song = songs.find(s => s.id === lyricsSongId) || nowPlaying;
+
+    document.getElementById('back-to-now').hidden = !(nowPlaying && song && song.id !== nowPlaying.id);
+
+    if (!song) {
+      title.textContent = 'Now Playing';
+      box.classList.add('muted');
+      box.textContent = 'Nothing playing right now. Tap a song to see its lyrics, tap it again to vote.';
+      lyricsShown = null;
       return;
     }
-    artistPhotos[artist] = null; // marque "en cours"
+
+    title.textContent = (song === nowPlaying ? 'Now Playing: ' : '') + song.title + ' — ' + song.artist;
+    const key = song.id + '\n' + (song.lyrics || '');
+    if (key === lyricsShown) return;
+    lyricsShown = key;
+
+    box.classList.toggle('muted', !song.lyrics);
+    if (song.lyrics) {
+      box.textContent = song.lyrics;
+      // Highlight [Verse], [Chorus]… headers
+      box.innerHTML = box.innerHTML.replace(/\[([^\]]+)\]/g, '<span class="section-header">[$1]</span>');
+    } else {
+      box.textContent = 'Lyrics coming soon.';
+    }
+    box.scrollTop = 0;
+  }
+
+  // ── Vote ──────────────────────────────────────────────────────────────────
+  function handleClick(id) {
+    const song = songs.find(s => s.id === id);
+    if (!song || isPlayed(song)) return;
+    lyricsSongId = id;
+    renderLyricsBar();
+
+    if (selectedId === id) {
+      votedIds.has(id) ? unvote(id) : vote(id);
+      return;
+    }
+    selectedId = id;
+    if (votedIds.has(id)) showToast('Tap again to take your vote back');
+    else if (votesLeft() === 0) showToast('No votes left — tap one of your green songs twice to take a vote back');
+    markAll();
+  }
+
+  async function unvote(id) {
+    selectedId = null;
     try {
-      const res = await fetch(
-        'https://api.deezer.com/search/artist?q=' + encodeURIComponent(artist) + '&limit=1&output=json'
-      );
-      const data = await res.json();
-      if (data.data && data.data.length > 0) {
-        const pic = data.data[0].picture_medium || data.data[0].picture_small;
-        if (pic) {
-          artistPhotos[artist] = pic;
-          imgEl.src = pic;
-          imgEl.onload = () => imgEl.classList.add('loaded');
-        }
+      const res = await fetch(`/vote/${id}`, { method: 'DELETE', credentials: 'include' });
+      if (res.ok || res.status === 404) {
+        votedIds.delete(id);
+        showToast('Vote removed');
+      } else if (res.status === 409) {
+        showToast('This song has already been played');
+      } else {
+        showToast('Error — please try again');
       }
-    } catch(e) { /* pas de photo, placeholder affiché */ }
+    } catch {
+      showToast('Error — please try again');
+    }
+    markAll();
   }
 
-  // ── WebSocket ──────────────────────────────────────────────────────────────
-  function connectWS() {
-    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${protocol}://${location.host}/ws`);
-
-    ws.onopen = () => {
-      document.getElementById('live-dot').classList.remove('disconnected');
-      document.getElementById('live-label').textContent = 'En vivo — ¡Vota ahora!';
-    };
-
-    ws.onmessage = (e) => {
-      const data = JSON.parse(e.data);
-      if (data.event === 'votes_reset') {
-        // Reset : tout le monde peut revoter pour toutes les chansons
-        votedIds = new Set();
-        showToast('🎸 ¡Nueva ronda! Vota la siguiente');
-      }
-      if (data.songs) {
-        songs = data.songs;
-        renderVotes();
-        renderLyricSelector();
-      }
-    };
-
-    ws.onclose = () => {
-      document.getElementById('live-dot').classList.add('disconnected');
-      document.getElementById('live-label').textContent = 'Reconectando...';
-      setTimeout(connectWS, 3000);
-    };
-
-    ws.onerror = () => ws.close();
-  }
-
-  // ── Vote ───────────────────────────────────────────────────────────────────
-  async function handleVote(id) {
-    if (votedIds.has(id)) {
-      showToast('Ya votaste por esta canción');
+  async function vote(id) {
+    selectedId = null;
+    if (votesLeft() === 0) {
+      showToast('No votes left — tap one of your green songs twice to take a vote back');
+      markAll();
       return;
     }
     try {
       const res = await fetch(`/vote/${id}`, { method: 'POST', credentials: 'include' });
-      if (res.status === 409) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok || data.already_voted) {
         votedIds.add(id);
-        renderVotes();
-        showToast('Ya votaste por esta canción');
-        return;
+        if (res.ok) {
+          const left = votesLeft();
+          showToast('Vote counted! 🤘 ' + (left ? left + (left === 1 ? ' vote' : ' votes') + ' left' : 'That was your last vote'));
+        }
+      } else if (data.limit_reached) {
+        voteLimit = data.limit;
+        showToast('No votes left — tap one of your green songs twice to take a vote back');
+        fetchMyVotes();   // resync: votes from another tab
+      } else if (res.status === 409) {
+        showToast('This song has already been played');
+      } else {
+        showToast('Error — please try again');
       }
-      if (!res.ok) throw new Error();
-      votedIds.add(id);
-      renderVotes();
-      showToast('¡Voto registrado! 🤘');
     } catch {
-      showToast('Error — inténtalo de nuevo');
+      showToast('Error — please try again');
     }
+    markAll();
   }
 
-  // ── Récupère les votes déjà effectués pour cette session ──────────────────
   async function fetchMyVotes() {
     try {
       const res = await fetch('/my-votes', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         votedIds = new Set(data.voted_ids);
-        renderVotes();
+        voteLimit = data.limit || voteLimit;
+        markAll();
       }
-    } catch(e) {}
+    } catch {}
   }
 
-  // ── Render votes ───────────────────────────────────────────────────────────
-  function renderVotes() {
-    const total = songs.reduce((s, c) => s + c.votes, 0);
-    const leadingId = songs.length ? songs.reduce((best, s) => s.votes > best.votes ? s : best, songs[0]).id : null;
-
-    const list = document.getElementById('song-list');
-    list.innerHTML = '';
-
-    songs.forEach((song, i) => {
-      const pct = total > 0 ? Math.round((song.votes / total) * 100) : 0;
-      const isLeading = song.id === leadingId && total > 0;
-      const isVoted = votedIds.has(song.id);
-
-      const card = document.createElement('div');
-      card.className = 'song-card' + (isLeading ? ' leading' : '');
-      card.innerHTML = `
-        <div class="artist-thumb-wrap">♪<img class="artist-thumb" alt=""></div>
-        <div>
-          <div class="song-number">0${i+1}${isLeading ? ' <span class="leading-badge">En cabeza</span>' : ''}</div>
-          <div class="song-title">${esc(song.title)}</div>
-          <div class="song-artist">${esc(song.artist)}</div>
-        </div>
-        <div class="vote-bar-wrap">
-          <div class="vote-bar-bg">
-            <div class="vote-bar-fill" style="width:${pct}%"></div>
-          </div>
-          <div class="vote-count">${pct}% — ${song.votes} voto${song.votes !== 1 ? 's' : ''}</div>
-        </div>
-        <button class="btn-vote ${isVoted ? 'voted' : ''}" ${isVoted ? 'disabled' : ''}>
-          ${isVoted ? '✓ Votado' : 'Votar'}
-        </button>
-      `;
-      list.appendChild(card);
-
-      // Photo artiste (async, sans bloquer le rendu)
-      loadArtistPhoto(song.artist, card.querySelector('.artist-thumb'));
-
-      // Bouton vote
-      const btn = card.querySelector('.btn-vote');
-      if (btn && !isVoted) {
-        btn.addEventListener('click', e => { e.stopPropagation(); handleVote(song.id); });
-      }
-    });
-  }
-
-  // ── Lyrics ─────────────────────────────────────────────────────────────────
-  function renderLyricSelector() {
-    const sel = document.getElementById('lyric-selector');
-    sel.innerHTML = '';
-    songs.forEach(song => {
-      const btn = document.createElement('button');
-      btn.className = 'btn-song-sel' + (selectedLyricId === song.id ? ' active' : '');
-      btn.textContent = song.title;
-      btn.addEventListener('click', () => {
-        selectedLyricId = song.id;
-        renderLyricSelector();
-        renderLyrics();
-      });
-      sel.appendChild(btn);
-    });
-  }
-
-  function formatLyrics(raw) {
-    // Met en valeur les en-têtes de section [Verse], [Chorus], etc.
-    return raw.replace(/\[([^\]]+)\]/g, '<span class="section-header">$1</span>');
-  }
-
-  function renderLyrics() {
-    const display = document.getElementById('lyrics-display');
-    if (!selectedLyricId) {
-      display.innerHTML = '<div class="lyrics-placeholder">← Elige una canción para ver la letra</div>';
-      return;
+  function applySongs(newSongs, catalogChanged) {
+    songs = newSongs;
+    const playing = songs.find(s => s.state === 'now_playing');
+    const newNowPlaying = playing ? playing.id : null;
+    if (newNowPlaying !== nowPlayingId) {
+      // New song playing: the bar switches back to it
+      nowPlayingId = newNowPlaying;
+      lyricsSongId = null;
     }
-    const song = songs.find(s => s.id === selectedLyricId);
-    if (!song) return;
-    display.innerHTML = song.lyrics
-      ? `<div class="lyrics-song-title">${song.title}</div>
-         <div class="lyrics-text">${formatLyrics(song.lyrics)}</div>`
-      : `<div class="lyrics-song-title">${song.title}</div>
-         <div class="lyrics-coming-soon">Letra disponible pronto —<br>¡Por ahora, escucha y siente!</div>`;
+    const selected = songs.find(s => s.id === selectedId);
+    if (selected && isPlayed(selected)) selectedId = null;
+
+    if (catalogChanged) renderSongs();
+    renderRanking();
+    renderLyricsBar();
   }
 
-  // ── Toast ──────────────────────────────────────────────────────────────────
+  // ── WebSocket ─────────────────────────────────────────────────────────────
+  function connectWS() {
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${protocol}://${location.host}/ws`);
+
+    ws.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      if (data.event === 'votes_reset') {
+        votedIds = new Set();
+        selectedId = null;
+        showToast('🎸 New round! Vote for the next song');
+      }
+      if (data.songs) {
+        // Only re-render the list if the catalog changed
+        const catalogChanged = data.songs.map(s => s.id + s.title + s.artist).join() !==
+                               songs.map(s => s.id + s.title + s.artist).join();
+        applySongs(data.songs, catalogChanged);
+      }
+    };
+
+    ws.onclose = () => setTimeout(connectWS, 3000);
+    ws.onerror = () => ws.close();
+  }
+
+  // ── Misc ────────────────────────────────────────────────────────────────
   function showToast(msg) {
     const t = document.getElementById('toast');
     t.textContent = msg;
     t.classList.add('show');
-    setTimeout(() => t.classList.remove('show'), 2500);
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => t.classList.remove('show'), 2500);
   }
 
-  // ── Init ───────────────────────────────────────────────────────────────────
-
-  // Theme toggle
-  var savedTheme = localStorage.getItem("pto-theme") || "dark";
-  if (savedTheme === "light") document.documentElement.classList.add("light");
-
-  document.getElementById("btn-theme").addEventListener("click", function() {
-    var isLight = document.documentElement.classList.toggle("light");
-    localStorage.setItem("pto-theme", isLight ? "light" : "dark");
+  document.getElementById('toggle-lyrics').addEventListener('click', () => {
+    const box = document.getElementById('lyrics-container');
+    box.classList.toggle('collapsed');
+    document.getElementById('toggle-lyrics').textContent = box.classList.contains('collapsed') ? '▼' : '▲';
   });
 
-  // Bizum copy
-  document.getElementById("btn-bizum").addEventListener("click", function() {
-    var numero = "+34658327204";
-    var btn = this;
-    navigator.clipboard.writeText(numero).then(function() {
-      btn.textContent = "✓ " + numero;
-      btn.classList.add("copied");
-      setTimeout(function() {
-        btn.textContent = "♪ Bizum";
-        btn.classList.remove("copied");
-      }, 2500);
-    }).catch(function() {
-      // fallback si clipboard pas dispo
-      showToast("Bizum: +34658327204");
-    });
+  document.getElementById('copy-phone').addEventListener('click', function () {
+    const number = document.getElementById('pto-phone').textContent;
+    navigator.clipboard.writeText(number)
+      .then(() => { this.textContent = '✓ Copiado'; setTimeout(() => (this.textContent = 'Copiar'), 2000); })
+      .catch(() => showToast('Tel: ' + number));
   });
 
+  document.getElementById('back-to-now').addEventListener('click', () => {
+    lyricsSongId = null;
+    renderLyricsBar();
+  });
+
+  // ── Suggest a song ────────────────────────────────────────────────────────
+  (function () {
+    const input = document.getElementById('suggest-title');
+    const btn = document.getElementById('suggest-send');
+    const msg = document.getElementById('suggest-msg');
+
+    async function send() {
+      const title = input.value.trim();
+      if (!title) { input.focus(); return; }
+      btn.disabled = true;
+      msg.textContent = 'Sending…';
+      try {
+        const res = await fetch('/proposals', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title })
+        });
+        if (res.status === 429) {
+          msg.textContent = 'Please wait a few seconds before suggesting another one.';
+          return;
+        }
+        if (!res.ok) throw new Error();
+        input.value = '';
+        msg.textContent = 'Thanks!';
+        setTimeout(() => { if (msg.textContent === 'Thanks!') msg.textContent = ''; }, 2000);
+      } catch {
+        msg.textContent = 'Error. Try again later.';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    btn.addEventListener('click', send);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+  })();
+
+  window.addEventListener('resize', fitSongLabels);
+
+  // First render over HTTP (the WebSocket takes over afterwards)
+  fetch('/songs')
+    .then(r => r.json())
+    .then(data => applySongs(data, true))
+    .catch(() => showToast('Could not load songs'));
   fetchMyVotes();
   connectWS();
 </script>

@@ -4,8 +4,8 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./playthatone.db")
 
-# Railway fournit les URLs PostgreSQL avec le prefix "postgres://"
-# SQLAlchemy requiert "postgresql://"
+# Railway provides PostgreSQL URLs with the "postgres://" prefix
+# SQLAlchemy requires "postgresql://"
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 

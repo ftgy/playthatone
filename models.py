@@ -11,6 +11,7 @@ class Song(Base):
     lyrics     = Column(Text, nullable=True)
     chords     = Column(Text, nullable=True)
     position   = Column(Integer, default=0)
+    state      = Column(String(20), nullable=True)   # None | "now_playing" | "played"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -21,3 +22,14 @@ class Vote(Base):
     song_id    = Column(Integer, nullable=False)
     session_id = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Proposal(Base):
+    __tablename__ = "proposals"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    title      = Column(String(200), nullable=False)
+    slug       = Column(String(200), nullable=False, index=True)
+    count      = Column(Integer, default=1)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

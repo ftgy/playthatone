@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Interpreter Panel</title>
+  <style>
+    :root {
+      --border: #ccc;
+      --selected: orange;
+      --now-playing: lightgreen;
+    }
+
+    html, body { height: 100%; }
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #fff;
+      color: #000;
+    }
+
+    /* ── Top bar ── */
+    #top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 0.5em 1em;
+      border-bottom: 2px solid var(--border);
+      background: #eee;
+    }
+    #title-button {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 1.5em;
+      font-weight: bold;
+      text-align: left;
+      background: none;
+      border: none;
+      padding: 0;
+      color: blue;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    #title-button.preview { color: #b36b00; }
+    #top-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    #top-actions button, #top-actions a {
+      padding: 0.5em 1em;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      font: inherit;
+      font-size: 0.9em;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    #addsong-button { background: mediumorchid; }
+    #reset-button { background: crimson; }
+
+    /* ── Chords ── */
+    #tab-section {
+      flex: 1;
+      min-height: 0;
+      padding: 1em 4.5em 1em 1em;
+      overflow: auto;
+    }
+    /* No line wrapping: chords stay aligned with the lyrics */
+    #tab-content {
+      margin: 0;
+      font-size: 1rem;
+      line-height: 1.15;
+      font-family: Consolas, "Courier New", Menlo, Monaco, monospace;
+      white-space: pre;
+    }
+    #tab-content.muted { color: #666; font-family: Arial, Helvetica, sans-serif; white-space: pre-wrap; }
+
+    /* Auto-scroll + text size */
+    #autoscroll {
+      position: fixed;
+      top: 64px;
+      right: 10px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    #autoscroll button {
+      min-width: 44px;
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      font: inherit;
+      cursor: pointer;
+    }
+    #autoscroll .play { font-weight: 700; }
+    #autoscroll .active { outline: 2px solid #2e7d32; }
+    #autoscroll .gap { height: 6px; }
+
+    /* ── Audience votes + suggestions ── */
+    #bottom {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      height: 26vh;
+      min-height: 150px;
+      border-top: 2px solid var(--border);
+      background: #f5f5f5;
+    }
+    #bottom section { min-height: 0; overflow-y: auto; padding: 0.6em 1em; }
+    #proposals-panel { border-left: 1px solid var(--border); }
+    #bottom h3 {
+      margin: 0 0 6px;
+      font-size: 0.85em;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #555;
+    }
+    .song-entry {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0.5em;
+      margin: 0.2em 0;
+      border-radius: 5px;
+      background: #fff;
+      border: 1px solid #ddd;
+      cursor: pointer;
+      user-select: none;
+    }
+    .song-entry .votes { font-weight: bold; }
+    .song-entry.selected { background-color: var(--selected); }
+    .empty { color: #777; margin: 0.3em 0; }
+
+    #proposals-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+    #proposals-list li { display: flex; gap: 6px; align-items: center; }
+    #proposals-list li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    #proposals-list button { font: inherit; font-size: 0.85em; padding: 2px 6px; cursor: pointer; }
+
+    @media (max-width: 700px) {
+      #top-bar { flex-wrap: wrap; }
+      #title-button { font-size: 1.2em; flex-basis: 100%; }
+      #bottom { grid-template-columns: 1fr; height: 34vh; }
+      #proposals-panel { border-left: none; border-top: 1px solid var(--border); }
+      #autoscroll { top: auto; bottom: calc(34vh + 10px); }
+    }
+
+    /* ── Login ── */
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 100;
+    }
+    .overlay.open { display: flex; }
+    .overlay-content {
+      width: min(360px, 90vw);
+      padding: 20px;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      text-align: center;
+    }
+    .overlay-content input, .overlay-content button {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 10px;
+      font: inherit;
+    }
+    .overlay-content input { margin: 10px 0; }
+    #login-error { color: red; }
+  </style>
+</head>
+<body>
+
+  <div id="admin-lock" class="overlay">
+    <form class="overlay-content" id="login-form">
+      <h2>Interpreter login</h2>
+      <input type="password" id="admin-password" placeholder="Token" autocomplete="current-password">
+      <button type="submit">Login</button>
+      <p id="login-error" hidden>Wrong token</p>
+    </form>
+  </div>
+
+  <div id="top-bar">
+    <button id="title-button" type="button">Esperando canción...</button>
+    <div id="top-actions">
+      <a id="addsong-button" href="/admin-panel">Panel de control</a>
+      <button id="reset-button" type="button">Reiniciar sesión</button>
+    </div>
+  </div>
+
+  <div id="autoscroll" aria-label="Auto-scroll">
+    <button id="as-play" class="play" type="button" title="Play / Stop">▶</button>
+    <button class="as-speed" type="button" data-speed="1">1</button>
+    <button class="as-speed" type="button" data-speed="2">2</button>
+    <button class="as-speed" type="button" data-speed="3">3</button>
+    <button class="as-speed" type="button" data-speed="4">4</button>
+    <button class="as-speed" type="button" data-speed="5">5</button>
+    <div class="gap"></div>
+    <button id="font-up" type="button" title="Texto más grande">A+</button>
+    <button id="font-down" type="button" title="Texto más pequeño">A−</button>
+  </div>
+
+  <div id="tab-section">
+    <pre id="tab-content" class="muted">Esperando canción seleccionada...</pre>
+  </div>
+
+  <div id="bottom">
+    <section id="rani-section">
+      <h3>Votos del público</h3>
+      <div id="ranking-list"></div>
+    </section>
+    <section id="proposals-panel">
+      <h3>Sugerencias</h3>
+      <ul id="proposals-list"></ul>
+    </section>
+  </div>
+
+  <script>
+    // ── State ─────────────────────────────────────────────────────────────────
+    let token = '';
+    let songs = [];
+    let nowPlayingId = null;
+    let selectedId = null;      // 1st tap = preview, 2nd tap = "now playing"
+    let displayedKey = null;    // avoid jumping to the top on every vote update
+
+    const tabSection = document.getElementById('tab-section');
+    const tabContent = document.getElementById('tab-content');
+    const titleButton = document.getElementById('title-button');
+
+    const storage = {
+      get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+      set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+      remove(k) { try { localStorage.removeItem(k); } catch {} },
+    };
+
+    async function api(path, method = 'GET') {
+      const res = await fetch(path, { method, headers: { Authorization: 'Bearer ' + token } });
+      if (res.status === 401) throw new Error('unauthorized');
+      if (!res.ok) throw new Error(await res.text());
+      return res.status === 204 ? null : res.json();
+    }
+
+    // ── Chords ──────────────────────────────────────────────────────────────
+    function showSong(song) {
+      const key = song ? song.id + '\n' + (song.chords || song.lyrics || '') : null;
+      if (key === displayedKey) return;
+      displayedKey = key;
+
+      const text = song && (song.chords || song.lyrics);
+      tabContent.classList.toggle('muted', !text);
+      if (!song) tabContent.textContent = 'Esperando canción seleccionada...';
+      else if (text) tabContent.textContent = text;
+      else tabContent.textContent = 'Sin acordes ni letra para "' + song.title + '". Añádelos desde el Panel de control.';
+      tabSection.scrollTop = 0;
+      autoscroll.stop();
+    }
+
+    function renderTitle() {
+      const nowPlaying = songs.find(s => s.id === nowPlayingId);
+      const preview = songs.find(s => s.id === selectedId);
+      titleButton.classList.toggle('preview', !!preview);
+      if (preview) titleButton.textContent = 'Vista previa: ' + preview.title + ' — ' + preview.artist;
+      else if (nowPlaying) titleButton.textContent = nowPlaying.title + ' — ' + nowPlaying.artist;
+      else titleButton.textContent = 'Esperando canción...';
+    }
+
+    function renderMain() {
+      renderTitle();
+      showSong(songs.find(s => s.id === selectedId) || songs.find(s => s.id === nowPlayingId));
+    }
+
+    // ── Audience votes ──────────────────────────────────────────────────────
+    function renderRanking() {
+      const list = document.getElementById('ranking-list');
+      const ranked = songs
+        .filter(s => s.votes > 0 && s.state !== 'now_playing' && s.state !== 'played')
+        .sort((a, b) => b.votes - a.votes);
+
+      list.innerHTML = '';
+      if (!ranked.length) {
+        list.innerHTML = '<p class="empty">Todavía no hay votos.</p>';
+        return;
+      }
+      ranked.forEach(song => {
+        const div = document.createElement('div');
+        div.className = 'song-entry' + (song.id === selectedId ? ' selected' : '');
+        const title = document.createElement('span');
+        title.textContent = song.title + ' — ' + song.artist;
+        const votes = document.createElement('span');
+        votes.className = 'votes';
+        votes.textContent = song.votes;
+        div.append(title, votes);
+        div.addEventListener('click', () => handleClick(song.id));
+        list.appendChild(div);
+      });
+    }
+
+    async function handleClick(id) {
+      if (selectedId !== id) {
+        selectedId = id;
+        renderRanking();
+        renderMain();
+        return;
+      }
+      // 2nd tap: the song becomes "now playing" for everyone
+      selectedId = null;
+      try {
+        await api(`/admin/songs/${id}/now-playing`, 'POST');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function applySongs(newSongs) {
+      songs = newSongs;
+      const playing = songs.find(s => s.state === 'now_playing');
+      nowPlayingId = playing ? playing.id : null;
+      const selected = songs.find(s => s.id === selectedId);
+      if (!selected || selected.state) selectedId = null;
+      renderRanking();
+      renderMain();
+    }
+
+    // ── Suggestions ──────────────────────────────────────────────────────────
+    async function loadProposals() {
+      const list = document.getElementById('proposals-list');
+      let proposals;
+      try { proposals = await api('/admin/proposals'); } catch { return; }
+
+      list.innerHTML = '';
+      if (!proposals.length) {
+        list.innerHTML = '<li class="empty">Ninguna sugerencia.</li>';
+        return;
+      }
+      proposals.forEach(p => {
+        const li = document.createElement('li');
+        const title = document.createElement('span');
+        title.textContent = p.title + (p.count > 1 ? '  (x' + p.count + ')' : '');
+
+        const btnSearch = document.createElement('button');
+        btnSearch.type = 'button';
+        btnSearch.textContent = 'Buscar';
+        btnSearch.onclick = () => window.open(
+          'https://www.google.com/search?q=' + encodeURIComponent(p.title + ' chords'), '_blank');
+
+        const btnDel = document.createElement('button');
+        btnDel.type = 'button';
+        btnDel.textContent = '✕';
+        btnDel.title = 'Descartar';
+        btnDel.onclick = () => api('/admin/proposals/' + p.id, 'DELETE').catch(() => {});
+
+        li.append(title, btnSearch, btnDel);
+        list.appendChild(li);
+      });
+    }
+
+    // ── WebSocket ────────────────────────────────────────────────────────────
+    function connectWS() {
+      const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${protocol}://${location.host}/ws`);
+      ws.onmessage = e => {
+        const data = JSON.parse(e.data);
+        if (data.songs) applySongs(data.songs);
+        if (data.event === 'proposals_update') loadProposals();
+      };
+      ws.onclose = () => setTimeout(connectWS, 3000);
+      ws.onerror = () => ws.close();
+    }
+
+    // ── Auto-scroll (from the old view) ───────────────────────────
+    const autoscroll = (function () {
+      const btnPlay = document.getElementById('as-play');
+      const speedBtns = Array.from(document.querySelectorAll('.as-speed'));
+      const speedPx = { 1: 12, 2: 18, 3: 24, 4: 30, 5: 34 };   // px / second
+      let playing = false, speed = Number(storage.get('pto-scroll-speed')) || 2;
+      let raf = null, lastT = 0, acc = 0;
+
+      function step(t) {
+        if (!playing) return;
+        if (!lastT) lastT = t;
+        acc += speedPx[speed] * (t - lastT) / 1000;   // accumulate pixel fractions (iOS)
+        lastT = t;
+        if (acc >= 1) {
+          const d = Math.floor(acc);
+          tabSection.scrollTop += d;
+          acc -= d;
+        }
+        if (tabSection.scrollTop >= tabSection.scrollHeight - tabSection.clientHeight - 1) return toggle(false);
+        raf = requestAnimationFrame(step);
+      }
+
+      function toggle(next) {
+        playing = typeof next === 'boolean' ? next : !playing;
+        btnPlay.textContent = playing ? '⏸' : '▶';
+        cancelAnimationFrame(raf);
+        if (playing) { lastT = 0; acc = 0; raf = requestAnimationFrame(step); }
+      }
+
+      function setSpeed(s) {
+        speed = s;
+        storage.set('pto-scroll-speed', s);
+        speedBtns.forEach(b => b.classList.toggle('active', Number(b.dataset.speed) === s));
+      }
+
+      btnPlay.addEventListener('click', () => toggle());
+      speedBtns.forEach(b => b.addEventListener('click', () => setSpeed(Number(b.dataset.speed))));
+      setSpeed(speed);
+      return { stop: () => toggle(false) };
+    })();
+
+    // ── Text size ──────────────────────────────────────────────────────
+    (function () {
+      let size = Number(storage.get('pto-tab-font')) || 16;
+      const apply = () => { tabContent.style.fontSize = size + 'px'; storage.set('pto-tab-font', size); };
+      document.getElementById('font-up').onclick = () => { size = Math.min(size + 2, 40); apply(); };
+      document.getElementById('font-down').onclick = () => { size = Math.max(size - 2, 10); apply(); };
+      apply();
+    })();
+
+    // ── Actions ──────────────────────────────────────────────────────────────
+    titleButton.addEventListener('click', () => {
+      // Go back to the current song after a preview
+      selectedId = null;
+      renderRanking();
+      renderMain();
+    });
+
+    document.getElementById('reset-button').addEventListener('click', async () => {
+      if (!confirm('¿Seguro que quieres reiniciar la sesión? Se borran los votos y las canciones tocadas.')) return;
+      try {
+        await api('/admin/reset', 'POST');
+        await api('/admin/played/reset', 'POST');
+      } catch (e) {
+        console.error(e);
+      }
+    });
+
+    // ── Login ────────────────────────────────────────────────────────────
+    function showLogin(error) {
+      document.getElementById('admin-lock').classList.add('open');
+      document.getElementById('login-error').hidden = !error;
+      document.getElementById('admin-password').focus();
+    }
+
+    async function start(candidate) {
+      token = candidate;
+      try {
+        const stats = await api('/admin/stats');
+        storage.set('pto-admin-token', token);
+        document.getElementById('admin-lock').classList.remove('open');
+        applySongs(stats.songs);
+        loadProposals();
+        connectWS();
+      } catch {
+        storage.remove('pto-admin-token');
+        showLogin(candidate !== '');
+      }
+    }
+
+    document.getElementById('login-form').addEventListener('submit', e => {
+      e.preventDefault();
+      start(document.getElementById('admin-password').value.trim());
+    });
+
+    // Try the saved token (or none: works when auth is disabled on the server)
+    start(storage.get('pto-admin-token') || '');
+  </script>
+</body>
+</html>

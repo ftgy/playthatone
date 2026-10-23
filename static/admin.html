@@ -38,9 +38,24 @@
 
   .song-row {
     border: 1px solid #1a1a1a; padding: 1rem 1.2rem; margin-bottom: 1px;
-    display: grid; grid-template-columns: 1fr auto auto auto auto;
+    display: grid; grid-template-columns: 1fr auto auto auto auto auto;
     align-items: center; gap: 1rem; background: #0d0d0d;
   }
+  .song-row.played { opacity: 0.45; }
+  .song-row.now-playing { border-color: #f0ece4; }
+  .btn-sm.active { background: #f0ece4; color: #0a0a0a; border-color: #f0ece4; }
+
+  /* NOW PLAYING + SUGERENCIAS */
+  .now-playing-box {
+    border: 1px solid #1a1a1a; background: #0d0d0d; padding: 1rem 1.2rem;
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  }
+  .now-playing-box .btn-sm { flex-shrink: 0; }
+  .proposal-row {
+    border: 1px solid #1a1a1a; padding: 0.7rem 1.2rem; margin-bottom: 1px;
+    display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 1rem; background: #0d0d0d;
+  }
+  .empty-msg { font-size: 0.65rem; color: #555; letter-spacing: 0.1em; padding: 0.5rem 0; }
   .song-row-title { font-family: "Special Elite", cursive; font-size: 1rem; }
   .song-row-artist { font-size: 0.65rem; color: #555; margin-top: 0.2rem; }
   .song-row-votes { font-size: 0.7rem; color: #888; min-width: 60px; text-align: right; }
@@ -173,9 +188,27 @@
   </div>
 
   <div class="section">
+    <div class="section-label">Sonando ahora</div>
+    <div class="now-playing-box">
+      <div>
+        <div class="song-row-title" id="now-playing-title">—</div>
+        <div class="song-row-artist" id="now-playing-artist">Pulsa ▶ en una cancion del catalogo</div>
+      </div>
+      <button class="btn-sm" id="btn-stop-playing" style="display:none">Terminar</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Sugerencias del publico</div>
+    <div id="proposals-list"></div>
+  </div>
+
+  <div class="section">
     <div class="section-label">Acciones</div>
     <button class="btn-reset" style="border-color:#f0ece4" id="btn-reset-votes">Reiniciar todos los votos</button>
+    <button class="btn-reset" id="btn-reset-played">Reiniciar canciones tocadas</button>
     <button class="btn-reset" id="btn-refresh">Actualizar estadisticas</button>
+    <a class="btn-reset" href="/interpreter" style="text-align:center;text-decoration:none">Vista interprete</a>
   </div>
 
   <div class="section">
@@ -225,7 +258,7 @@
         <div class="ac-results" id="ac-modal"></div>
       </div>
     </div>
-    <textarea id="modal-lyrics" placeholder="Las parolas apareceran aqui tras importar, o escribe manualmente..."></textarea>
+    <textarea id="modal-lyrics" placeholder="La letra aparecera aqui tras importar, o escribe manualmente..."></textarea>
     <div class="modal-actions">
       <button class="btn-primary" id="btn-save-lyrics">Guardar</button>
       <button class="btn-reset" style="flex:1" id="btn-close-modal">Cancelar</button>
@@ -235,11 +268,11 @@
 
 <div class="overlay" id="chords-overlay">
   <div class="modal" style="max-width:720px">
-    <h2 id="chords-modal-title">Accords</h2>
+    <h2 id="chords-modal-title">Chords</h2>
 
     <div style="display:flex;gap:1px;align-items:center">
       <button class="btn-primary" id="btn-auto-search-chords" style="white-space:nowrap">
-        <span class="spinner" id="chords-spinner" style="display:none"></span>Chercher sur UG
+        <span class="spinner" id="chords-spinner" style="display:none"></span>Search UG
       </button>
       <span style="font-size:0.6rem;color:#555;letter-spacing:0.1em;margin-left:0.8rem" id="chords-search-label"></span>
     </div>
@@ -247,19 +280,19 @@
     <div class="chords-results" id="chords-results" style="display:none"></div>
 
     <div id="chords-editor" style="display:none">
-      <div style="font-size:0.55rem;color:#555;letter-spacing:0.15em;text-transform:uppercase;margin-bottom:0.4rem">Aperçu</div>
+      <div style="font-size:0.55rem;color:#555;letter-spacing:0.15em;text-transform:uppercase;margin-bottom:0.4rem">Preview</div>
       <div class="chords-preview" id="chords-preview"></div>
-      <div style="font-size:0.55rem;color:#555;letter-spacing:0.15em;text-transform:uppercase;margin:0.8rem 0 0.4rem">Édition manuelle</div>
-      <textarea class="chords-ta" id="chords-textarea" placeholder="Collez ou éditez la grille ici..."></textarea>
+      <div style="font-size:0.55rem;color:#555;letter-spacing:0.15em;text-transform:uppercase;margin:0.8rem 0 0.4rem">Manual editing</div>
+      <textarea class="chords-ta" id="chords-textarea" placeholder="Paste or edit the chord chart here..."></textarea>
     </div>
 
     <div id="chords-manual-entry" style="display:none">
-      <textarea class="chords-ta" id="chords-textarea-manual" placeholder="Aucun résultat trouvé — saisie manuelle..."></textarea>
+      <textarea class="chords-ta" id="chords-textarea-manual" placeholder="No results found — enter manually..."></textarea>
     </div>
 
     <div class="modal-actions">
-      <button class="btn-primary" id="btn-save-chords">Sauvegarder</button>
-      <button class="btn-reset" style="flex:1" id="btn-close-chords-modal">Annuler</button>
+      <button class="btn-primary" id="btn-save-chords">Save</button>
+      <button class="btn-reset" style="flex:1" id="btn-close-chords-modal">Cancel</button>
     </div>
   </div>
 </div>
@@ -311,7 +344,90 @@ async function loadStats() {
     document.getElementById("stat-connected").textContent = data.connected_clients;
     document.getElementById("stat-songs").textContent = songs.length;
     renderSongs();
+    renderNowPlaying();
+    renderProposals(await api("/admin/proposals"));
   } catch(e) { console.error(e); }
+}
+
+// NOW PLAYING
+function renderNowPlaying() {
+  var playing = songs.find(function(s) { return s.state === "now_playing"; });
+  document.getElementById("now-playing-title").textContent = playing ? playing.title : "—";
+  document.getElementById("now-playing-artist").textContent = playing ? playing.artist : "Pulsa ▶ en una cancion del catalogo";
+  document.getElementById("btn-stop-playing").style.display = playing ? "" : "none";
+}
+
+async function setNowPlaying(id) {
+  try {
+    await api("/admin/songs/" + id + "/now-playing", "POST");
+    await loadStats();
+    showToast("Sonando ahora");
+  } catch(e) { showToast("Error: " + e.message); }
+}
+
+async function stopNowPlaying() {
+  try {
+    await api("/admin/now-playing/stop", "POST");
+    await loadStats();
+    showToast("Cancion terminada");
+  } catch(e) { showToast("Error: " + e.message); }
+}
+
+async function resetPlayed() {
+  if (!confirm("Volver a habilitar TODAS las canciones tocadas?")) return;
+  try {
+    await api("/admin/played/reset", "POST");
+    await loadStats();
+    showToast("Canciones reiniciadas");
+  } catch(e) { showToast("Error: " + e.message); }
+}
+
+// SUGERENCIAS
+function renderProposals(proposals) {
+  var container = document.getElementById("proposals-list");
+  container.innerHTML = "";
+  if (!proposals.length) {
+    container.innerHTML = '<div class="empty-msg">Ninguna sugerencia por ahora</div>';
+    return;
+  }
+  proposals.forEach(function(p) {
+    var row = document.createElement("div");
+    row.className = "proposal-row";
+
+    var titleEl = document.createElement("div");
+    titleEl.className = "song-row-title";
+    titleEl.textContent = p.title;
+
+    var countEl = document.createElement("div");
+    countEl.className = "song-row-votes";
+    countEl.textContent = "x" + p.count;
+
+    // Pre-fill the "Anadir cancion" form
+    var btnAdd = document.createElement("button");
+    btnAdd.className = "btn-sm";
+    btnAdd.textContent = "+ Catalogo";
+    btnAdd.addEventListener("click", function() {
+      document.getElementById("new-title").value = p.title;
+      document.getElementById("new-artist").focus();
+      document.getElementById("new-artist").scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+
+    var btnDelete = document.createElement("button");
+    btnDelete.className = "btn-sm red";
+    btnDelete.textContent = "Eliminar";
+    btnDelete.addEventListener("click", async function() {
+      try {
+        await api("/admin/proposals/" + p.id, "DELETE");
+        await loadStats();
+      } catch(e) { showToast("Error: " + e.message); }
+    });
+
+    row.appendChild(titleEl);
+    row.appendChild(countEl);
+    row.appendChild(btnAdd);
+    row.appendChild(btnDelete);
+    container.appendChild(row);
+  });
 }
 
 function renderSongs() {
@@ -319,7 +435,7 @@ function renderSongs() {
   container.innerHTML = "";
   songs.forEach(function(song) {
     var row = document.createElement("div");
-    row.className = "song-row";
+    row.className = "song-row" + (song.state === "now_playing" ? " now-playing" : song.state === "played" ? " played" : "");
 
     var info = document.createElement("div");
     var titleEl = document.createElement("div");
@@ -335,6 +451,14 @@ function renderSongs() {
     votesEl.className = "song-row-votes";
     votesEl.textContent = song.votes + " voto" + (song.votes !== 1 ? "s" : "");
 
+    var btnPlay = document.createElement("button");
+    btnPlay.className = "btn-sm" + (song.state === "now_playing" ? " active" : "");
+    btnPlay.textContent = song.state === "now_playing" ? "♪ Sonando" : song.state === "played" ? "Tocada ▶" : "▶ Tocar";
+    btnPlay.disabled = song.state === "now_playing";
+    (function(id) {
+      btnPlay.addEventListener("click", function() { setNowPlaying(id); });
+    })(song.id);
+
     var btnLyrics = document.createElement("button");
     btnLyrics.className = "btn-sm";
     btnLyrics.textContent = song.lyrics ? "Letra" : "+ Letra";
@@ -344,7 +468,7 @@ function renderSongs() {
 
     var btnChords = document.createElement("button");
     btnChords.className = "btn-sm";
-    btnChords.textContent = song.chords ? "Accords" : "+ Accords";
+    btnChords.textContent = song.chords ? "Chords" : "+ Chords";
     (function(id) {
       btnChords.addEventListener("click", function() { openChordsModal(id); });
     })(song.id);
@@ -358,6 +482,7 @@ function renderSongs() {
 
     row.appendChild(info);
     row.appendChild(votesEl);
+    row.appendChild(btnPlay);
     row.appendChild(btnLyrics);
     row.appendChild(btnChords);
     row.appendChild(btnDelete);
@@ -438,10 +563,10 @@ async function selectChartLyrics(hit) {
     if (data.lyrics && data.lyrics.length > 20) {
       ta.value = data.lyrics.trim();
       ta.placeholder = "";
-      showToast("Paroles importadas desde lyrics.ovh");
+      showToast("Letra importada desde lyrics.ovh");
     } else {
-      ta.placeholder = "Sin paroles — escribe manualmente";
-      showToast("Sin paroles para esta cancion");
+      ta.placeholder = "Sin letra — escribe manualmente";
+      showToast("Sin letra para esta cancion");
     }
   } catch(e) {
     ta.placeholder = "No encontrado — escribe manualmente";
@@ -450,8 +575,8 @@ async function selectChartLyrics(hit) {
 }
 
 async function fetchChartLyrics(query, boxId, onSelect) {
-  // lyrics.ovh ne supporte pas la recherche par texte libre
-  // On affiche directement un champ artiste/titre pour appel direct
+  // lyrics.ovh doesn't support free-text search
+  // so show artist/title fields for a direct lookup
   var box = document.getElementById(boxId);
   box.innerHTML = "";
 
@@ -470,7 +595,7 @@ async function fetchChartLyrics(query, boxId, onSelect) {
       "<input id=\"ovh-artist\" type=\"text\" style=\"flex:1;background:#0a0a0a;border:1px solid #333;color:#f0ece4;font-family:monospace;font-size:0.7rem;padding:0.4rem 0.6rem\" placeholder=\"Artista\" value=\"" + guessArtist + "\">" +
       "<input id=\"ovh-title\" type=\"text\" style=\"flex:1;background:#0a0a0a;border:1px solid #333;color:#f0ece4;font-family:monospace;font-size:0.7rem;padding:0.4rem 0.6rem\" placeholder=\"Titulo\"  value=\"" + guessTitle + "\">" +
     "</div>" +
-    "<button id=\"ovh-btn\" style=\"background:#f0ece4;color:#0a0a0a;border:none;font-family:monospace;font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;padding:0.4rem 1rem;cursor:pointer;width:100%\">Buscar paroles</button>";
+    "<button id=\"ovh-btn\" style=\"background:#f0ece4;color:#0a0a0a;border:none;font-family:monospace;font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;padding:0.4rem 1rem;cursor:pointer;width:100%\">Buscar letra</button>";
 
   box.appendChild(hint);
 
@@ -614,7 +739,7 @@ function openChordsModal(id) {
   editingChordsId = id;
   var song = songs.find(function(s) { return s.id === id; });
   document.getElementById("chords-modal-title").textContent =
-    (song ? song.title + " — " : "") + "Accords";
+    (song ? song.title + " — " : "") + "Chords";
   document.getElementById("chords-search-label").textContent =
     song ? song.artist + " · " + song.title : "";
   document.getElementById("chords-results").style.display = "none";
@@ -622,7 +747,7 @@ function openChordsModal(id) {
   document.getElementById("chords-editor").style.display = "none";
   document.getElementById("chords-manual-entry").style.display = "none";
 
-  // Préremplir si des accords existent déjà
+  // Pre-fill if chords already exist
   if (song && song.chords) {
     document.getElementById("chords-textarea").value = song.chords;
     document.getElementById("chords-preview").textContent = song.chords;
@@ -663,9 +788,9 @@ async function autoSearchChords() {
       var errData = {};
       try { errData = await res.json(); } catch(_) {}
       if (res.status === 502) {
-        throw new Error("UG_DOWN:" + (errData.detail || "API Ultimate Guitar inaccessible depuis le serveur"));
+        throw new Error("UG_DOWN:" + (errData.detail || "Ultimate Guitar unreachable from the server"));
       }
-      throw new Error("Aucun résultat");
+      throw new Error("No results");
     }
     var results = await res.json();
 
@@ -687,7 +812,7 @@ async function autoSearchChords() {
       var meta = document.createElement("div");
       meta.className = "chords-result-meta";
       meta.innerHTML =
-        (tab.tonality ? "<div>Tonalité : " + tab.tonality + "</div>" : "") +
+        (tab.tonality ? "<div>Key: " + tab.tonality + "</div>" : "") +
         (tab.difficulty ? "<div>" + tab.difficulty + "</div>" : "") +
         "<div>★ " + (tab.rating ? tab.rating.toFixed(1) : "?") + " (" + (tab.votes || 0) + ")</div>";
 
@@ -699,7 +824,7 @@ async function autoSearchChords() {
           el.classList.remove("selected");
         });
         item.classList.add("selected");
-        loadChordTab(tab.id);
+        loadChordTab(tab.url);
       });
 
       container.appendChild(item);
@@ -707,9 +832,9 @@ async function autoSearchChords() {
 
   } catch(e) {
     if (e.message && e.message.startsWith("UG_DOWN:")) {
-      showToast("Ultimate Guitar inaccessible depuis le serveur — entrée manuelle");
+      showToast("Ultimate Guitar unreachable from the server — enter manually");
     } else {
-      showToast("Aucun résultat sur Ultimate Guitar");
+      showToast("No results on Ultimate Guitar");
     }
     document.getElementById("chords-manual-entry").style.display = "block";
   } finally {
@@ -718,10 +843,10 @@ async function autoSearchChords() {
   }
 }
 
-async function loadChordTab(tabId) {
-  showToast("Chargement des accords...");
+async function loadChordTab(tabUrl) {
+  showToast("Loading chords...");
   try {
-    var res = await fetch("/admin/chords/fetch?tab_id=" + tabId, {
+    var res = await fetch("/admin/chords/fetch?url=" + encodeURIComponent(tabUrl), {
       headers: { "Authorization": "Bearer " + token }
     });
     if (!res.ok) throw new Error();
@@ -731,9 +856,9 @@ async function loadChordTab(tabId) {
     document.getElementById("chords-preview").textContent = data.chords;
     document.getElementById("chords-editor").style.display = "block";
     document.getElementById("chords-manual-entry").style.display = "none";
-    showToast("Accords chargés");
+    showToast("Chords loaded");
   } catch(e) {
-    showToast("Erreur lors du chargement");
+    showToast("Error while loading");
   }
 }
 
@@ -750,8 +875,8 @@ async function saveChords() {
     await api("/admin/songs/" + editingChordsId + "/chords", "POST", { chords: chordsVal });
     await loadStats();
     closeChordsModal();
-    showToast("Accords sauvegardés");
-  } catch { showToast("Erreur lors de la sauvegarde"); }
+    showToast("Chords saved");
+  } catch { showToast("Error while saving"); }
 }
 
 // Wire up buttons
@@ -764,6 +889,10 @@ document.addEventListener("DOMContentLoaded", function() {
   if (btnLogin) btnLogin.addEventListener("click", login);
   var btnReset = document.getElementById("btn-reset-votes");
   if (btnReset) btnReset.addEventListener("click", resetVotes);
+  var btnResetPlayed = document.getElementById("btn-reset-played");
+  if (btnResetPlayed) btnResetPlayed.addEventListener("click", resetPlayed);
+  var btnStopPlaying = document.getElementById("btn-stop-playing");
+  if (btnStopPlaying) btnStopPlaying.addEventListener("click", stopNowPlaying);
   var btnRefresh = document.getElementById("btn-refresh");
   if (btnRefresh) btnRefresh.addEventListener("click", loadStats);
   var btnAdd = document.getElementById("btn-add-song");
@@ -786,6 +915,9 @@ document.addEventListener("DOMContentLoaded", function() {
   if (chordsTA) chordsTA.addEventListener("input", function() {
     document.getElementById("chords-preview").textContent = this.value;
   });
+
+  // Auth disabled on the server (DISABLE_AUTH=1) → go straight in
+  fetch("/admin/stats").then(function(r) { if (r.ok) login(); }).catch(function() {});
 });
 
 </script>

@@ -6,6 +6,6 @@
 ## Stack
 
 - **FastAPI** — back-end Python
-- **SQLite** — base de données (fichier local)
-- **WebSockets** — votes en temps réel
-- **Vanilla HTML/JS** — front-end minimaliste
+- **SQLite** — database (local file)
+- **WebSockets** — real-time votes
+- **Vanilla HTML/JS** — minimalist front-end
