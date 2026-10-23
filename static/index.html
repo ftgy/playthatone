@@ -91,11 +91,22 @@
 
   .song-card {
     border: 1px solid var(--border); padding: 1.5rem; margin-bottom: 1px;
-    display: grid; grid-template-columns: 1fr auto auto;
+    display: grid; grid-template-columns: 56px 1fr auto auto;
     align-items: center; gap: 1.5rem;
     position: relative; overflow: hidden;
     transition: border-color 0.15s;
   }
+
+  .artist-thumb-wrap {
+    width: 56px; height: 56px; flex-shrink: 0;
+    background: var(--card); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden; font-size: 1.4rem; color: var(--border);
+  }
+  .artist-thumb {
+    width: 100%; height: 100%; object-fit: cover; display: none;
+  }
+  .artist-thumb.loaded { display: block; }
   .song-card::before {
     content: ''; position: absolute; left: 0; top: 0; bottom: 0;
     width: 0; background: var(--card-hover); transition: width 0.4s ease; z-index: 0;
@@ -199,7 +210,8 @@
   .toast.show { transform: translateY(0); opacity: 1; }
 
   @media (max-width: 600px) {
-    .song-card { grid-template-columns: 1fr auto; }
+    .song-card { grid-template-columns: 48px 1fr auto; }
+    .artist-thumb-wrap { width: 48px; height: 48px; }
     .vote-bar-wrap { display: none; }
   }
 </style>
@@ -247,9 +259,42 @@
 <script>
   // ── State ──────────────────────────────────────────────────────────────────
   let songs = [];
-  let userVotedId = null;   // null = pas encore voté cette session
+  let votedIds = new Set();   // IDs des chansons déjà votées cette session
   let selectedLyricId = null;
   let ws = null;
+  const artistPhotos = {};    // cache : artist → url (ou null si introuvable)
+
+  // ── Artist photos (Deezer, gratuit, pas de clé) ───────────────────────────
+  function esc(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  async function loadArtistPhoto(artist, imgEl) {
+    if (artistPhotos[artist] !== undefined) {
+      if (artistPhotos[artist]) {
+        imgEl.src = artistPhotos[artist];
+        imgEl.onload = () => imgEl.classList.add('loaded');
+      }
+      return;
+    }
+    artistPhotos[artist] = null; // marque "en cours"
+    try {
+      const res = await fetch(
+        'https://api.deezer.com/search/artist?q=' + encodeURIComponent(artist) + '&limit=1&output=json'
+      );
+      const data = await res.json();
+      if (data.data && data.data.length > 0) {
+        const pic = data.data[0].picture_medium || data.data[0].picture_small;
+        if (pic) {
+          artistPhotos[artist] = pic;
+          imgEl.src = pic;
+          imgEl.onload = () => imgEl.classList.add('loaded');
+        }
+      }
+    } catch(e) { /* pas de photo, placeholder affiché */ }
+  }
 
   // ── WebSocket ──────────────────────────────────────────────────────────────
   function connectWS() {
@@ -264,8 +309,8 @@
     ws.onmessage = (e) => {
       const data = JSON.parse(e.data);
       if (data.event === 'votes_reset') {
-        // Reset : tout le monde peut revoter
-        userVotedId = null;
+        // Reset : tout le monde peut revoter pour toutes les chansons
+        votedIds = new Set();
         showToast('🎸 ¡Nueva ronda! Vota la siguiente');
       }
       if (data.songs) {
@@ -286,30 +331,37 @@
 
   // ── Vote ───────────────────────────────────────────────────────────────────
   async function handleVote(id) {
-    if (userVotedId !== null) {
-      showToast(userVotedId === id ? 'Ya votaste por esta canción' : 'Solo puedes votar una vez');
+    if (votedIds.has(id)) {
+      showToast('Ya votaste por esta canción');
       return;
     }
-
     try {
       const res = await fetch(`/vote/${id}`, { method: 'POST', credentials: 'include' });
-
       if (res.status === 409) {
-        // Le serveur dit qu'on a déjà voté (cookie présent)
-        const data = await res.json();
-        userVotedId = data.voted_for;
+        votedIds.add(id);
         renderVotes();
-        showToast('Solo puedes votar una vez por ronda');
+        showToast('Ya votaste por esta canción');
         return;
       }
-
       if (!res.ok) throw new Error();
-      userVotedId = id;
+      votedIds.add(id);
       renderVotes();
       showToast('¡Voto registrado! 🤘');
     } catch {
       showToast('Error — inténtalo de nuevo');
     }
+  }
+
+  // ── Récupère les votes déjà effectués pour cette session ──────────────────
+  async function fetchMyVotes() {
+    try {
+      const res = await fetch('/my-votes', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        votedIds = new Set(data.voted_ids);
+        renderVotes();
+      }
+    } catch(e) {}
   }
 
   // ── Render votes ───────────────────────────────────────────────────────────
@@ -323,16 +375,16 @@
     songs.forEach((song, i) => {
       const pct = total > 0 ? Math.round((song.votes / total) * 100) : 0;
       const isLeading = song.id === leadingId && total > 0;
-      const isVoted = userVotedId === song.id;
-      const hasVoted = userVotedId !== null;
+      const isVoted = votedIds.has(song.id);
 
       const card = document.createElement('div');
       card.className = 'song-card' + (isLeading ? ' leading' : '');
       card.innerHTML = `
+        <div class="artist-thumb-wrap">♪<img class="artist-thumb" alt=""></div>
         <div>
           <div class="song-number">0${i+1}${isLeading ? ' <span class="leading-badge">En cabeza</span>' : ''}</div>
-          <div class="song-title">${song.title}</div>
-          <div class="song-artist">${song.artist}</div>
+          <div class="song-title">${esc(song.title)}</div>
+          <div class="song-artist">${esc(song.artist)}</div>
         </div>
         <div class="vote-bar-wrap">
           <div class="vote-bar-bg">
@@ -340,18 +392,20 @@
           </div>
           <div class="vote-count">${pct}% — ${song.votes} voto${song.votes !== 1 ? 's' : ''}</div>
         </div>
-        <button class="btn-vote ${isVoted ? 'voted' : ''}" data-id="${song.id}" ${hasVoted && !isVoted ? 'disabled' : ''}>
+        <button class="btn-vote ${isVoted ? 'voted' : ''}" ${isVoted ? 'disabled' : ''}>
           ${isVoted ? '✓ Votado' : 'Votar'}
         </button>
       `;
       list.appendChild(card);
-    });
 
-    document.querySelectorAll('.btn-vote:not(:disabled)').forEach(btn => {
-      btn.addEventListener('click', e => {
-        e.stopPropagation();
-        handleVote(parseInt(btn.dataset.id));
-      });
+      // Photo artiste (async, sans bloquer le rendu)
+      loadArtistPhoto(song.artist, card.querySelector('.artist-thumb'));
+
+      // Bouton vote
+      const btn = card.querySelector('.btn-vote');
+      if (btn && !isVoted) {
+        btn.addEventListener('click', e => { e.stopPropagation(); handleVote(song.id); });
+      }
     });
   }
 
@@ -428,6 +482,7 @@
     });
   });
 
+  fetchMyVotes();
   connectWS();
 </script>
 </body>

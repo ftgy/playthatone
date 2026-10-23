@@ -109,6 +109,14 @@ def get_songs(db: Session = Depends(get_db)):
     return songs_with_votes(db)
 
 
+@app.get("/my-votes")
+def get_my_votes(db: Session = Depends(get_db), session_id: str = Cookie(default=None)):
+    if not session_id:
+        return {"voted_ids": []}
+    voted = db.query(Vote.song_id).filter(Vote.session_id == session_id).all()
+    return {"voted_ids": [v[0] for v in voted]}
+
+
 @app.post("/vote/{song_id}", status_code=201)
 async def vote(
     song_id: int,
@@ -125,12 +133,15 @@ async def vote(
     if not song:
         raise HTTPException(status_code=404, detail="Canción no encontrada")
 
-    # Vérifier si cette session a déjà voté
-    existing = db.query(Vote).filter(Vote.session_id == session_id).first()
+    # Vérifier si cette session a déjà voté pour cette chanson spécifique
+    existing = db.query(Vote).filter(
+        Vote.session_id == session_id,
+        Vote.song_id == song_id
+    ).first()
     if existing:
         resp = JSONResponse(
             status_code=409,
-            content={"ok": False, "already_voted": True, "voted_for": existing.song_id}
+            content={"ok": False, "already_voted": True, "voted_for": song_id}
         )
         resp.set_cookie("session_id", session_id, max_age=86400 * 30, httponly=True, samesite="lax")
         return resp
