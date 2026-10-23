@@ -49,6 +49,10 @@ def _migrate_db():
         if "state" not in existing:
             conn.execute(text("ALTER TABLE songs ADD COLUMN state VARCHAR(20)"))
             conn.commit()
+        for col, sql_type in (("genre", "VARCHAR(50)"), ("year", "INTEGER"), ("language", "VARCHAR(30)")):
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE songs ADD COLUMN {col} {sql_type}"))
+                conn.commit()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -116,6 +120,9 @@ def songs_with_votes(db: Session) -> List[dict]:
             "chords": s.chords,
             "position": s.position,
             "state": s.state,
+            "genre": s.genre,
+            "year": s.year,
+            "language": s.language,
             "votes": count,
         })
     return result

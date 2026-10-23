@@ -38,9 +38,12 @@
 
   .song-row {
     border: 1px solid #1a1a1a; padding: 1rem 1.2rem; margin-bottom: 1px;
-    display: grid; grid-template-columns: 1fr auto auto auto auto auto;
+    display: grid; grid-template-columns: 1fr auto auto auto auto auto auto;
     align-items: center; gap: 1rem; background: #0d0d0d;
   }
+  .song-row-meta { font-size: 0.6rem; color: #555; letter-spacing: 0.1em; margin-top: 0.15rem; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 1px; }
+  .info-grid label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.6rem; color: #555; letter-spacing: 0.15em; text-transform: uppercase; }
   .song-row.played { opacity: 0.45; }
   .song-row.now-playing { border-color: #f0ece4; }
   .btn-sm.active { background: #f0ece4; color: #0a0a0a; border-color: #f0ece4; }
@@ -246,6 +249,25 @@
   </div>
 </div>
 
+<div class="overlay" id="info-overlay">
+  <div class="modal">
+    <h2 id="info-modal-title">Info</h2>
+    <div class="info-grid">
+      <label>Titulo<input type="text" id="info-title"></label>
+      <label>Artista<input type="text" id="info-artist"></label>
+      <label>Estilo<input type="text" id="info-genre" list="genre-options" maxlength="50" placeholder="Rock, Pop, Folk..."></label>
+      <label>Ano<input type="text" id="info-year" inputmode="numeric" maxlength="4" placeholder="1975"></label>
+      <label>Idioma<input type="text" id="info-language" list="language-options" maxlength="30" placeholder="English, Spanish..."></label>
+    </div>
+    <datalist id="genre-options"></datalist>
+    <datalist id="language-options"></datalist>
+    <div class="modal-actions">
+      <button class="btn-primary" id="btn-save-info">Guardar</button>
+      <button class="btn-reset" style="flex:1" id="btn-close-info">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="lyrics-overlay">
   <div class="modal">
     <h2 id="modal-song-title">Editar letra</h2>
@@ -446,6 +468,13 @@ function renderSongs() {
     artistEl.textContent = song.artist;
     info.appendChild(titleEl);
     info.appendChild(artistEl);
+    var meta = [song.genre, song.year, song.language].filter(Boolean).join(" · ");
+    if (meta) {
+      var metaEl = document.createElement("div");
+      metaEl.className = "song-row-meta";
+      metaEl.textContent = meta;
+      info.appendChild(metaEl);
+    }
 
     var votesEl = document.createElement("div");
     votesEl.className = "song-row-votes";
@@ -457,6 +486,13 @@ function renderSongs() {
     btnPlay.disabled = song.state === "now_playing";
     (function(id) {
       btnPlay.addEventListener("click", function() { setNowPlaying(id); });
+    })(song.id);
+
+    var btnInfo = document.createElement("button");
+    btnInfo.className = "btn-sm";
+    btnInfo.textContent = song.genre && song.year && song.language ? "Info" : "+ Info";
+    (function(id) {
+      btnInfo.addEventListener("click", function() { openInfoModal(id); });
     })(song.id);
 
     var btnLyrics = document.createElement("button");
@@ -483,6 +519,7 @@ function renderSongs() {
     row.appendChild(info);
     row.appendChild(votesEl);
     row.appendChild(btnPlay);
+    row.appendChild(btnInfo);
     row.appendChild(btnLyrics);
     row.appendChild(btnChords);
     row.appendChild(btnDelete);
@@ -623,6 +660,60 @@ function openLyricsModal(id) {
   document.getElementById("ac-modal").classList.remove("open");
   document.getElementById("modal-lyrics").value = song && song.lyrics ? song.lyrics : "";
   document.getElementById("lyrics-overlay").classList.add("open");
+}
+
+// SONG INFO (title, artist, style, year, language)
+var editingInfoId = null;
+
+function fillDatalist(id, field) {
+  var values = Array.from(new Set(songs.map(function(s) { return s[field]; }).filter(Boolean))).sort();
+  var list = document.getElementById(id);
+  list.innerHTML = "";
+  values.forEach(function(v) {
+    var opt = document.createElement("option");
+    opt.value = v;
+    list.appendChild(opt);
+  });
+}
+
+function openInfoModal(id) {
+  editingInfoId = id;
+  var song = songs.find(function(s) { return s.id === id; });
+  if (!song) return;
+  document.getElementById("info-modal-title").textContent = song.title + " — Info";
+  document.getElementById("info-title").value = song.title;
+  document.getElementById("info-artist").value = song.artist;
+  document.getElementById("info-genre").value = song.genre || "";
+  document.getElementById("info-year").value = song.year || "";
+  document.getElementById("info-language").value = song.language || "";
+  fillDatalist("genre-options", "genre");
+  fillDatalist("language-options", "language");
+  document.getElementById("info-overlay").classList.add("open");
+}
+
+function closeInfoModal() {
+  document.getElementById("info-overlay").classList.remove("open");
+  editingInfoId = null;
+}
+
+async function saveInfo() {
+  var title = document.getElementById("info-title").value.trim();
+  var artist = document.getElementById("info-artist").value.trim();
+  var yearText = document.getElementById("info-year").value.trim();
+  if (!title || !artist) { showToast("Titulo y artista requeridos"); return; }
+  if (yearText && !/^\d{4}$/.test(yearText)) { showToast("Ano: 4 cifras"); return; }
+  try {
+    await api("/admin/songs/" + editingInfoId, "PATCH", {
+      title: title,
+      artist: artist,
+      genre: document.getElementById("info-genre").value.trim() || null,
+      year: yearText ? Number(yearText) : null,
+      language: document.getElementById("info-language").value.trim() || null
+    });
+    await loadStats();
+    closeInfoModal();
+    showToast("Info guardada");
+  } catch { showToast("Error al guardar"); }
 }
 
 function closeModal() {
@@ -901,6 +992,8 @@ document.addEventListener("DOMContentLoaded", function() {
   if (btnSave) btnSave.addEventListener("click", saveLyrics);
   var btnClose = document.getElementById("btn-close-modal");
   if (btnClose) btnClose.addEventListener("click", closeModal);
+  document.getElementById("btn-save-info").addEventListener("click", saveInfo);
+  document.getElementById("btn-close-info").addEventListener("click", closeInfoModal);
   var tokenInput = document.getElementById("token-input");
   if (tokenInput) tokenInput.addEventListener("keydown", function(e) { if (e.key === "Enter") login(); });
 

@@ -12,6 +12,9 @@ class Song(Base):
     chords     = Column(Text, nullable=True)
     position   = Column(Integer, default=0)
     state      = Column(String(20), nullable=True)   # None | "now_playing" | "played"
+    genre      = Column(String(50), nullable=True)   # style, e.g. "Rock", "Folk"
+    year       = Column(Integer, nullable=True)      # original release year
+    language   = Column(String(30), nullable=True)   # e.g. "English", "Spanish"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

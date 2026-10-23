@@ -115,6 +115,58 @@
     #ranking-top3 li.top3 { font-size: 1.15em; }
     #ranking-empty { margin: 0; }
 
+    [hidden] { display: none !important; }
+
+    /* ── Filters ── */
+    #filters {
+      margin: 0 20px 6px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.75);
+    }
+    #song-search {
+      width: 100%;
+      box-sizing: border-box;
+      font: inherit;
+      padding: 6px 10px;
+      border: 1px solid #999;
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+    .chip-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      padding: 3px 0;
+      scrollbar-width: none;
+    }
+    .chip-row::-webkit-scrollbar { display: none; }
+    .chip-label { font-weight: bold; font-size: 0.85em; min-width: 72px; flex-shrink: 0; }
+    .chip {
+      flex-shrink: 0;
+      font: inherit;
+      font-size: 0.85em;
+      padding: 3px 11px;
+      border: 1px solid #999;
+      border-radius: 999px;
+      background: #fff;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .chip.active { background: #222; color: #fff; border-color: #222; }
+    #filter-status { margin: 6px 0 0; font-size: 0.85em; }
+    #filter-status button {
+      font: inherit;
+      background: none;
+      border: none;
+      padding: 0 0 0 6px;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    #no-match { margin: 10px 20px; }
+
     /* ── Vote a song ── */
     #songs-container {
       column-count: 1;
@@ -257,6 +309,8 @@
       #ranking-box { margin: 0 12px 16px; padding: 12px; }
       #songs-container { padding: 10px 12px 32px; }
       #suggest-box { margin: 16px 12px; }
+      #filters { margin: 0 12px 6px; padding: 10px; }
+      #no-match { margin: 10px 12px; }
     }
   </style>
 </head>
@@ -286,6 +340,12 @@
 
 <h1>Vote a Song</h1>
 <p id="votes-left"></p>
+<div id="filters">
+  <input id="song-search" type="search" placeholder="Search a song or artist…" autocomplete="off"/>
+  <div id="chip-rows"></div>
+  <p id="filter-status" hidden></p>
+</div>
+<p id="no-match" class="muted" hidden>No songs match these filters.</p>
 <div id="songs-container"></div>
 
 <div id="suggest-box">
@@ -312,35 +372,19 @@
   let selectedId = null;      // 1st tap = select, 2nd tap = vote (or take the vote back)
   let nowPlayingId = null;
   let lyricsSongId = null;    // song shown in the bar (null = follow "now playing")
+  const filters = { genre: null, decade: null, language: null, text: '' };
   let ws = null;
 
   const isPlayed = song => song.state === 'now_playing' || song.state === 'played';
 
-  // ── Artist photos: local image, else Deezer ───────────────────────────
-  const deezerCache = {};
-
+  // ── Artist photos (static/images/artist/, see fetch_artist_photos.py) ──
   function setArtistPhoto(artist, container) {
     const img = document.createElement('img');
     img.alt = artist;
     img.loading = 'lazy';
     img.src = '/static/images/artist/' + encodeURIComponent(artist) + '.jpg';
-    img.onerror = async () => {
-      img.onerror = null;
-      const pic = await deezerPhoto(artist);
-      if (pic) img.src = pic; else img.remove();
-    };
+    img.onerror = () => img.remove();
     container.appendChild(img);
-  }
-
-  async function deezerPhoto(artist) {
-    if (!(artist in deezerCache)) {
-      deezerCache[artist] = fetch(
-        'https://api.deezer.com/search/artist?q=' + encodeURIComponent(artist) + '&limit=1&output=json'
-      ).then(r => r.json())
-       .then(d => (d.data && d.data[0] && (d.data[0].picture_medium || d.data[0].picture_small)) || null)
-       .catch(() => null);
-    }
-    return deezerCache[artist];
   }
 
   // ── Render: list by artist ─────────────────────────────────────────────
@@ -380,9 +424,112 @@
       container.appendChild(group);
     });
 
-    fitSongLabels();
+    renderFilterChips();
+    applyFilters();
     markAll();
   }
+
+  // ── Filters: style, decade, language + text search ──────────────────
+  const FILTER_ROWS = [
+    { key: 'genre', label: 'Style' },
+    { key: 'decade', label: 'Decade' },
+    { key: 'language', label: 'Language' },
+  ];
+  const decadeOf = song => song.year ? Math.floor(song.year / 10) * 10 : null;
+  const decadeLabel = d => (d < 2000 ? String(d).slice(2) : String(d)) + 's';
+  const fold = str => (str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+  function filterValue(song, key) {
+    return key === 'decade' ? decadeOf(song) : song[key];
+  }
+
+  function matches(song) {
+    for (const { key } of FILTER_ROWS) {
+      if (filters[key] !== null && filterValue(song, key) !== filters[key]) return false;
+    }
+    const q = fold(filters.text.trim());
+    return !q || fold(song.title).includes(q) || fold(song.artist).includes(q);
+  }
+
+  function renderFilterChips() {
+    const rows = document.getElementById('chip-rows');
+    rows.innerHTML = '';
+    FILTER_ROWS.forEach(({ key, label }) => {
+      // Values in the catalog: decades in order, the rest most common first
+      const counts = new Map();
+      songs.forEach(s => {
+        const v = filterValue(s, key);
+        if (v !== null && v !== undefined && v !== '') counts.set(v, (counts.get(v) || 0) + 1);
+      });
+      if (filters[key] !== null && !counts.has(filters[key])) filters[key] = null;
+      if (counts.size < 2) return;
+      const values = [...counts.keys()].sort(key === 'decade'
+        ? (a, b) => a - b
+        : (a, b) => counts.get(b) - counts.get(a) || String(a).localeCompare(String(b)));
+
+      const row = document.createElement('div');
+      row.className = 'chip-row';
+      const name = document.createElement('span');
+      name.className = 'chip-label';
+      name.textContent = label;
+      row.appendChild(name);
+      [null, ...values].forEach(v => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'chip' + (filters[key] === v ? ' active' : '');
+        chip.textContent = v === null ? 'All' : key === 'decade' ? decadeLabel(v) : v;
+        chip.dataset.key = key;
+        chip.dataset.value = v === null ? '' : v;
+        chip.onclick = () => {
+          // Tapping the active chip again clears that filter
+          filters[key] = (v === null || filters[key] === v) ? null : v;
+          renderFilterChips();
+          applyFilters();
+        };
+        row.appendChild(chip);
+      });
+      rows.appendChild(row);
+    });
+  }
+
+  function applyFilters() {
+    let shown = 0;
+    document.querySelectorAll('#songs-container .group').forEach(group => {
+      let visible = 0;
+      group.querySelectorAll('.song').forEach(el => {
+        const song = songs.find(s => s.id === Number(el.dataset.id));
+        const ok = song && matches(song);
+        el.hidden = !ok;
+        visible += ok;
+      });
+      group.hidden = visible === 0;
+      shown += visible;
+    });
+    const active = FILTER_ROWS.some(({ key }) => filters[key] !== null) || filters.text.trim();
+    const status = document.getElementById('filter-status');
+    status.hidden = !active;
+    if (active) {
+      status.textContent = `Showing ${shown} of ${songs.length} songs`;
+      const clear = document.createElement('button');
+      clear.type = 'button';
+      clear.textContent = 'Clear filters';
+      clear.onclick = () => {
+        FILTER_ROWS.forEach(({ key }) => (filters[key] = null));
+        filters.text = '';
+        document.getElementById('song-search').value = '';
+        renderFilterChips();
+        applyFilters();
+      };
+      status.appendChild(clear);
+    }
+    document.getElementById('no-match').hidden = shown > 0;
+    fitSongLabels();
+  }
+
+  document.getElementById('song-search').addEventListener('input', e => {
+    filters.text = e.target.value;
+    applyFilters();
+  });
 
   // ── Render: live ranking ──────────────────────────────────────────
   function renderRanking() {
@@ -593,8 +740,8 @@
       }
       if (data.songs) {
         // Only re-render the list if the catalog changed
-        const catalogChanged = data.songs.map(s => s.id + s.title + s.artist).join() !==
-                               songs.map(s => s.id + s.title + s.artist).join();
+        const catalogKey = s => [s.id, s.title, s.artist, s.genre, s.year, s.language].join('|');
+        const catalogChanged = data.songs.map(catalogKey).join() !== songs.map(catalogKey).join();
         applySongs(data.songs, catalogChanged);
       }
     };
