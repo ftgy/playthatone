@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Interpreter Panel</title>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      margin: 0;
+      font-family: sans-serif;
+      height: 100vh;
+    }
+    #top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5em 1em;
+      border-bottom: 2px solid #ccc;
+      background: #eee;
+    }
+    #title-button {
+      font-size: 1.5em;
+      font-weight: bold;
+      background: none;
+      border: none;
+      color: blue;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    #reset-button {
+      padding: 0.5em 1em;
+      background: crimson;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    #addsong-button {
+      padding: 0.5em 1em;
+      background: mediumorchid;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    #tab-section {
+      flex: 1;
+      padding: 1em;
+      overflow-y: auto;
+    }
+    #rani-section {
+      height: 22vh;
+      overflow-y: auto;
+      padding: 1em;
+      background-color: #f5f5f5;
+      border-top: 2px solid #ccc;
+    }
+    .song-entry {
+      padding: 0.5em;
+      margin: 0.2em 0;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .selected {
+      background-color: orange;
+    }
+    .now-playing {
+      background-color: lightgreen;
+    }
+
+    /* TAB readability (tablet compact) */
+    #tab-content {
+      font-size: 1rem;         /* base default */
+      line-height: 1.15;       /* compacto para que quepan líneas */
+      font-family: Consolas, "Courier New", Menlo, Monaco, monospace;
+      white-space: pre-wrap;
+    }
+
+    /* Autoscroll controls */
+    #autoscroll{
+      position:fixed;
+      top:10px; right:10px;
+      z-index: 9000;
+      display:flex; flex-direction:column; gap:6px;
+    }
+    #autoscroll button{
+      padding:6px 8px; border:1px solid #ccc; background:#fff;
+      cursor:pointer; border-radius:8px; min-width:44px;
+    }
+    #autoscroll .play{ font-weight:700; }
+    #autoscroll .active{ outline:2px solid #2e7d32; }
+  </style>
+
+  <!-- 🔒 Overlay CSS (added) -->
+  <style>
+    .overlay{
+      position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+      background:rgba(0,0,0,.45); z-index:9999;
+    }
+    .overlay-content{
+      background:#fff; padding:20px; border-radius:12px; width:min(360px,90vw);
+      box-shadow:0 10px 30px rgba(0,0,0,.2); text-align:center;
+    }
+    .overlay-content input{ width:100%; padding:10px; margin:10px 0; }
+    .overlay-content button{ width:100%; padding:10px; }
+  </style>
+</head>
+<body>
+
+  <!-- 🔒 Admin overlay -->
+  <div id="admin-lock" class="overlay" style="display:none;">
+    <div class="overlay-content">
+      <h2>Admin login</h2>
+      <input type="password" id="admin-password" placeholder="Password" autocomplete="current-password">
+      <button onclick="doLogin()">Login</button>
+      <p id="login-error" style="color:red; display:none;">Wrong password</p>
+    </div>
+  </div>
+
+
+  <div id="autoscroll" aria-label="Auto-scroll">
+    <button id="as-play" class="play" title="Play/Stop">▶</button>
+    <button class="as-speed" data-speed="1">1</button>
+    <button class="as-speed" data-speed="2">2</button>
+    <button class="as-speed" data-speed="3">3</button>
+    <button class="as-speed" data-speed="4">4</button>
+    <button class="as-speed" data-speed="5">5</button>
+  </div>
+
+  <div id="top-bar">
+    <button id="title-button">Esperando canción...</button>
+    <div>
+      <button id="addsong-button">Panel de control</button>
+      <button id="reset-button">Reiniciar sesión</button>
+    </div>
+  </div>
+
+  <div id="tab-section">
+    <pre id="tab-content">Esperando canción seleccionada...</pre>
+  </div>
+
+  <div id="rani-section"></div>
+
+  <script>
+    let nowPlayingId = null;
+    let selectedId = null;
+    let currentDisplayedId = null;
+    let catalog = [];
+
+    const tabContent = document.getElementById("tab-content");
+    const titleButton = document.getElementById("title-button");
+    const resetButton = document.getElementById("reset-button");
+    const addSongButton = document.getElementById("addsong-button");
+    const raniSection = document.getElementById("rani-section");
+
+    async function loadTab(id) {
+      try {
+        const response = await fetch(`/songs/tabs/TAB${id}.txt?t=` + Date.now(), { cache: 'no-store' });
+        const text = await response.text();
+        tabContent.textContent = text;
+        currentDisplayedId = id;
+      } catch (err) {
+        tabContent.textContent = "Unable to load TAB for song ID " + id;
+      }
+    }
+
+    function setNowPlaying(id, title) {
+      nowPlayingId = id;
+      titleButton.textContent = title;
+      highlightSongs();
+    }
+
+    function highlightSongs() {
+      document.querySelectorAll(".song-entry").forEach(div => {
+        div.classList.remove("selected", "now-playing");
+        if (div.dataset.id === nowPlayingId) div.classList.add("now-playing");
+        else if (div.dataset.id === selectedId) div.classList.add("selected");
+      });
+    }
+
+    function addSongEntry(id, title, votes) {
+      const div = document.createElement("div");
+      div.className = "song-entry";
+      div.dataset.id = id;
+      div.textContent = `${title} (${votes})`;
+
+      div.addEventListener("click", async () => {
+        if (id === nowPlayingId) return;
+
+        if (selectedId === id) {
+          if (nowPlayingId && window.songCatalog?.[nowPlayingId]) {
+            window.songCatalog[nowPlayingId].state = "played";
+          }
+          if (!window.songCatalog[id]) {
+            window.songCatalog[id] = { title: title, state: null };
+          }
+          nowPlayingId = id;
+          window.songCatalog[id].state = "now_playing";
+
+          setNowPlaying(id, title);
+          await loadTab(id);
+
+          fetch('/votes/now_playing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ songId: id })
+          });
+
+          const target = document.querySelector(`.song-entry[data-id="${id}"]`);
+          if (target) target.remove();
+          selectedId = null;
+        } else {
+          selectedId = id;
+          highlightSongs();
+          await loadTab(id);
+        }
+      });
+
+      raniSection.appendChild(div);
+    }
+
+    function renderVotedSongs(byDevice) {
+      raniSection.innerHTML = '';
+      const songVotes = {};
+
+      for (const [songId, devices] of Object.entries(byDevice)) {
+        songVotes[songId] = devices.length;
+      }
+
+      const votedSongs = catalog.filter(song => songVotes[song.id]);
+      votedSongs.sort((a, b) => songVotes[b.id] - songVotes[a.id]);
+
+      votedSongs.forEach(song => {
+        const state = window.songCatalog?.[song.id]?.state;
+        if (state === "now_playing" || state === "played") return;
+        addSongEntry(song.id, song.title, songVotes[song.id]);
+      });
+    }
+
+    async function init() {
+      const catRes = await fetch('/catalog/catalog.json');
+      catalog = await catRes.json();
+      window.songCatalog = {};
+      catalog.forEach(song => {
+        window.songCatalog[song.id] = { title: song.title, state: null };
+      });
+
+      const socket = io();
+      socket.on("connect", () => console.log("WebSocket connected"));
+
+      socket.on("update", data => {
+        renderVotedSongs(data.byDevice || {});
+
+        const nowPlayingEntry = Object.entries(window.songCatalog || {}).find(
+          ([, data]) => data.state === "now_playing"
+        );
+        if (nowPlayingEntry) {
+          const [id, song] = nowPlayingEntry;
+          setNowPlaying(id, song.title || id);
+          loadTab(id);
+        }
+      });
+
+      const voteRes = await fetch('/votes/counts.json');
+      const voteData = await voteRes.json();
+      renderVotedSongs(voteData.byDevice || {});
+    }
+
+    titleButton.addEventListener("click", () => {
+      if (nowPlayingId) loadTab(nowPlayingId);
+    });
+
+    resetButton.addEventListener("click", async () => {
+      if (confirm("¿Seguro que quieres reiniciar la sesión?")) {
+        await fetch("/votes/reset");
+        localStorage.removeItem("songStates");
+        location.reload();
+      }
+    });
+
+    addSongButton.addEventListener("click", () => {
+      window.location.href = "addsong.html";
+    });
+
+    init();
+  </script>
+
+  <script>
+(function(){
+  const list = document.getElementById('proposals-list');
+
+  function makeRow(p){
+    const li = document.createElement('li');
+    li.dataset.slug = p.slug;
+    li.style.display = 'flex';
+    li.style.gap = '8px';
+    li.style.alignItems = 'center';
+
+    const title = document.createElement('span');
+    title.textContent = `${p.title}  (x${p.count})`;
+    title.style.flex = '1';
+
+    const btnCopy = document.createElement('button');
+    btnCopy.textContent = '⧉ Copy';
+    btnCopy.onclick = async ()=> {
+      try { await navigator.clipboard.writeText(p.title); } catch {}
+      btnCopy.textContent = '✓ Copied';
+      setTimeout(()=>btnCopy.textContent='⧉ Copy', 900);
+    };
+
+    const btnSearch = document.createElement('button');
+    btnSearch.textContent = 'Search';
+    btnSearch.onclick = ()=> {
+      const q = encodeURIComponent(p.title);
+      window.open(`https://www.google.com/search?q=${q}+chords`, '_blank');
+      window.open(`https://www.google.com/search?q=${q}+lyrics`, '_blank');
+      window.open(`https://www.ultimate-guitar.com/search.php?search_type=title&value=${q}`, '_blank');
+      window.open(`https://www.youtube.com/results?search_query=${q}+chords`, '_blank');
+    };
+
+    const btnDel = document.createElement('button');
+    btnDel.textContent = 'Dismiss';
+    btnDel.onclick = async ()=> {
+      await fetch(`/proposals/${p.slug}`, { method:'DELETE' });
+      const node = list.querySelector(`li[data-slug="${p.slug}"]`);
+      if (node) node.remove();
+    };
+
+    li.append(title, btnCopy, btnSearch, btnDel);
+    return li;
+  }
+
+  async function refresh(){
+    try {
+      const r = await fetch('/proposals');
+      const j = await r.json();
+      list.innerHTML = '';
+      (j.proposals || []).forEach(p => list.appendChild(makeRow(p)));
+    } catch(e) {}
+  }
+
+  // Inicial
+  refresh();
+
+  // En tiempo real
+  if (window.socket) {
+    window.socket.on('proposal_added', ()=> refresh());
+    window.socket.on('proposal_removed', ({slug})=>{
+      const node = list.querySelector(`li[data-slug="${slug}"]`);
+      if (node) node.remove();
+    });
+  }
+})();
+</script>
+
+<!-- Proposals panel -->
+<section id="proposals-panel" style="margin-top:16px; border-top:1px solid #ddd; padding-top:12px;">
+  <h3 style="margin:0 0 8px 0;">Proposals</h3>
+  <ul id="proposals-list" style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:6px;"></ul>
+</section>
+
+<script>
+(function(){
+  const list = document.getElementById('proposals-list');
+
+  function makeRow(p){
+    const li = document.createElement('li');
+    li.dataset.slug = p.slug;
+    li.style.display = 'flex';
+    li.style.gap = '8px';
+    li.style.alignItems = 'center';
+
+    const title = document.createElement('span');
+    title.textContent = `${p.title}  (x${p.count})`;
+    title.style.flex = '1';
+
+    const btnCopy = document.createElement('button');
+    btnCopy.textContent = '⧉ Copy';
+    btnCopy.onclick = async ()=> {
+      try { await navigator.clipboard.writeText(p.title); } catch {}
+      btnCopy.textContent = '✓ Copied';
+      setTimeout(()=>btnCopy.textContent='⧉ Copy', 900);
+    };
+
+    const btnSearch = document.createElement('button');
+    btnSearch.textContent = 'Search';
+    btnSearch.onclick = ()=> {
+      const q = encodeURIComponent(p.title);
+      window.open(`https://www.google.com/search?q=${q}+chords`, '_blank');
+      window.open(`https://www.google.com/search?q=${q}+lyrics`, '_blank');
+      window.open(`https://www.ultimate-guitar.com/search.php?search_type=title&value=${q}`, '_blank');
+      window.open(`https://www.youtube.com/results?search_query=${q}+chords`, '_blank');
+    };
+
+    const btnDel = document.createElement('button');
+    btnDel.textContent = 'Dismiss';
+    btnDel.onclick = async ()=> {
+      await fetch(`/proposals/${p.slug}`, { method:'DELETE' });
+      const node = list.querySelector(`li[data-slug="${p.slug}"]`);
+      if (node) node.remove();
+    };
+
+    li.append(title, btnCopy, btnSearch, btnDel);
+    return li;
+  }
+
+  async function refresh(){
+    try {
+      const r = await fetch('/proposals');
+      const j = await r.json();
+      list.innerHTML = '';
+      (j.proposals || []).forEach(p => list.appendChild(makeRow(p)));
+    } catch(e) {}
+  }
+
+  // Inicial
+  refresh();
+
+  // En tiempo real
+  if (window.socket) {
+    window.socket.on('proposal_added', ()=> refresh());
+    window.socket.on('proposal_removed', ({slug})=>{
+      const node = list.querySelector(`li[data-slug="${slug}"]`);
+      if (node) node.remove();
+    });
+  }
+})();
+</script>
+
+<script>
+(function(){
+  const container = document.getElementById('tab-section');
+  if(!container) return;
+
+  const btnPlay   = document.getElementById('as-play');
+  const speedBtns = Array.from(document.querySelectorAll('.as-speed'));
+
+  // Acumulador 'acc' para no perder fracciones de píxel (iOS)
+  let playing = false, speed = 2, raf = null, lastT = 0, acc = 0;
+
+  // Velocidades (px/seg). 5 = tu “bien” actual
+  const speedPx = {1:12, 2:18, 3:24, 4:30, 5:34};
+
+  function step(t){
+    if(!playing) return;
+    if(!lastT) lastT = t;
+    const dt = (t - lastT) / 1000;
+    lastT = t;
+
+    // ← acumulamos fracciones hasta tener al menos 1px que aplicar
+    acc += (speedPx[speed] || 10) * dt;
+    if (acc >= 1) {
+      const d = Math.floor(acc);
+      container.scrollTop += d;
+      acc -= d;
+    }
+
+    const max = container.scrollHeight - container.clientHeight - 1;
+    if (container.scrollTop >= max) { toggle(false); return; }
+    raf = requestAnimationFrame(step);
+  }
+
+  function toggle(next){
+    playing = (typeof next === 'boolean') ? next : !playing;
+    btnPlay.textContent = playing ? '⏸' : '▶';
+    if (playing) { lastT = 0; acc = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(step); }
+    else { cancelAnimationFrame(raf); raf = null; }
+  }
+
+  btnPlay.addEventListener('click', ()=> toggle());
+  speedBtns.forEach(b=>{
+    b.addEventListener('click', ()=>{
+      speed = Number(b.dataset.speed) || 2;
+      speedBtns.forEach(x=> x.classList.toggle('active', x===b));
+    });
+  });
+  const def = speedBtns.find(b=>b.dataset.speed==='2');
+  if (def) def.classList.add('active');
+})();
+</script>
+
+
+
+  <!-- 🔒 Login script -->
+  <script>
+  async function doLogin(){
+    const pwd=document.getElementById('admin-password')?document.getElementById('admin-password').value.trim():'';
+    try{
+      const res=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pwd})});
+      const data=await res.json();
+      if(res.ok&&data.ok){
+        var e=document.getElementById('login-error'); if(e) e.style.display='none';
+        var l=document.getElementById('admin-lock'); if(l) l.style.display='none';
+      }else{
+        var e=document.getElementById('login-error'); if(e) e.style.display='block';
+      }
+    }catch(e){
+      var e1=document.getElementById('login-error'); if(e1) e1.style.display='block';
+    }
+  }
+  async function checkAuth(){
+    try{
+      const r=await fetch('/auth/status'); const d=await r.json();
+      if(!d.is_admin){ var l=document.getElementById('admin-lock'); if(l) l.style.display='flex'; }
+    }catch(e){
+      var l=document.getElementById('admin-lock'); if(l) l.style.display='flex';
+    }
+  }
+  document.addEventListener('DOMContentLoaded',checkAuth);
+  </script>
+
+</body>
+</html>

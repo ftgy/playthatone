@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+# Track code in backend/core, ignore solo los JSON de runtime
+!backend/core/
+!backend/core/__init__.py
+!backend/core/config.py
+backend/core/*.json

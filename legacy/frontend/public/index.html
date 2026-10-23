@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <title>Play That One!</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        iframe {
+            display: block; /* remove inline gap */
+            width: 100%;
+            max-width: 100%;
+        }
+
+        #lyrics-wrapper {
+            position: sticky;
+            top: 0;
+            background: white;
+            z-index: 1000;
+            border-bottom: 1px solid #ccc;
+        }
+
+        #lyrics-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f0f0f0;
+            padding: 6px 12px;
+            font-weight: bold;
+            border-bottom: 1px solid #ccc;
+        }
+
+        #toggle-lyrics {
+            cursor: pointer;
+            font-size: 1.2em;
+            background: none;
+            border: none;
+        }
+
+        #lyrics-container.collapsed {
+            display: none;
+        }
+
+        #ranking-box {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin: 20px;
+            border-radius: 8px;
+            background-color: #fdfdfd;
+            max-width: 100%;
+            overflow-x: auto;
+        }
+
+        #ranking-top3 {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 10px;
+        }
+
+        #ranking-top3 li {
+            list-style: none;
+            padding: 10px;
+            flex: 1;
+            margin: 0 5px;
+            font-weight: bold;
+            font-size: 1.1em;
+            text-align: left;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            background-color: #f3f3f3;
+            cursor: pointer;
+        }
+
+        #ranking-rest {
+            display: flex;
+            overflow-x: auto;
+            padding-bottom: 10px;
+            gap: 6px;
+        }
+
+        #ranking-rest li {
+            list-style: none;
+            min-width: 120px;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            text-align: left;
+            background-color: #f9f9f9;
+            cursor: pointer;
+        }
+
+        @import url('https://fonts.googleapis.com/css2?family=Raleway:wght@500;700&display=swap');
+
+        body {
+            font-family: 'Raleway', sans-serif;
+        }
+        :root{ --voted-green: #32cd32; }
+
+        #songs-container {
+            column-count: 1;
+            column-gap: 20px;
+            padding: 10px 20px 40px;
+        }
+
+        @media (min-width: 600px) {
+            #songs-container {
+                column-count: 2;
+            }
+        }
+
+        @media (min-width: 1000px) {
+            #songs-container {
+                column-count: 3;
+            }
+        }
+
+        .group h3 {
+            margin: 0 0 4px;
+            font-size: 1.15em;
+            color: #333;
+            border: none;
+            padding: 0;
+        }
+
+        .song {
+            margin: 4px 0;
+            padding: 18px 28px;
+            font-size: 1.2em;
+            font-weight: 600;
+            text-align: left;
+            background-color: #f9f9f9;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            transition: background-color 0.2s ease;
+            user-select: none;
+            cursor: pointer;
+        }
+
+        .song:hover:not(.selected):not(.voted):not(.played) {
+           #background-color: #eee;
+            background-color: blue; <!--peter-->
+        }
+
+        .selected { background-color: orange; }
+        .voted { background-color: var(--voted-green) !important; }
+        .played {
+            opacity: 0.4;
+            pointer-events: none;
+            text-decoration: line-through;
+            background-color: pink;<!--peter-->
+        }
+
+        body {
+            margin: 0;
+            background: url('/songs/images/fondo_horizontal.png') no-repeat center center fixed;
+            background-size: cover;
+        }
+
+        @media (orientation: portrait) {
+            body {
+                background: url('/songs/images/fondo_vertical.png') no-repeat center center fixed;
+                background-size: cover;
+            }
+        }
+
+        .banner {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 20px;
+            background-color: #222;
+            color: white;
+        }
+
+        .banner img { max-height: 50px; }
+        .banner-title {
+            font-size: 1.5em;
+            text-align: left;
+            flex-grow: 1;
+        }
+
+        #lyrics-container {
+            padding: 20px;
+            background-color: #fff;
+            border-bottom: 1px solid #ccc;
+            white-space: pre-line; /* ← respetar saltos de línea de la letra */
+            font-size: 1.1em;
+            min-height: 120px;
+        }
+
+        #ranking { margin-top: 20px; }
+        #ranking li {
+            cursor: pointer;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin: 3px 0;
+            list-style: none;
+        }
+        #ranking li.played {
+            opacity: 0.4;
+            text-decoration: line-through;
+            pointer-events: none;
+        }
+
+        .group h3 {
+            display: flex;
+            justify-content: space-between;
+            align-items: center; /* centra verticalmente tanto texto como imagen */
+            font-weight: bold;
+        }
+        .group h3 img {
+            max-height: 100%; /* ocupa toda la altura disponible */
+            height: auto; /* mantiene proporción */
+            object-fit: contain;
+            margin-left: auto;
+        }
+
+        .group { position: relative; display: flex;
+            justify-content: space-between;
+            align-items: flex-start; /* fuerza la alineación superior */
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            padding: 5px;
+        }
+
+        .group-left { flex: 1; padding-right: 10px; }
+        .group-right {
+            flex: 0 0 25%;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start; /* siempre arriba */
+            overflow: hidden;
+        }
+        .group-right img {
+            max-height: calc(2.5em + 80px); /* altura epígrafe + 1 canción */
+            max-width: 100%;
+            height: auto;
+            width: auto;
+            object-fit: contain;
+        }
+
+        #lyrics-wrapper,
+        #lyrics-container,
+        #ranking-box {
+            background: none !important;
+            border: none !important;
+        }
+
+        .song { background: none !important; border: 1px solid #ccc; }
+        .song { background-color: #fff !important; border: 1px solid #ccc; } /* visible */
+
+        .song.selected { background-color: orange !important; }
+        .song.voted { background-color: var(--voted-green) !important; }
+        .song.played { background-color: pink !important; }
+
+        #ranking-box { background: none !important; border: none !important; }
+        #ranking-top3 li,
+        #ranking-rest li {
+            background-color: #fff !important;
+            border: 1px solid #ccc;
+        }
+
+        .banner-title {
+            text-align: center !important;
+            font-size: 2em !important;
+            font-family: 'Lobster', cursive, 'Raleway', sans-serif !important;
+            letter-spacing: 1px;
+        }
+        @import url('https://fonts.googleapis.com/css2?family=Lobster&display=swap');
+
+        /* === Uniformidad VOT === */
+        .group-left { min-width: 0; }
+        .song {
+            width: 100%;
+            max-width: 100%;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            box-sizing: border-box;
+        }
+        .group-right img { max-height: calc(2.5em + 30px) !important; }
+
+        /* Evitar que un grupo se divida entre columnas */
+        .group {
+            break-inside: avoid;
+            -webkit-column-break-inside: avoid;
+            -moz-column-break-inside: avoid;
+        }
+    /* === Group header band across row === */
+        .group::before{
+            content:"";
+            position:absolute;
+            left:0; right:0;
+            top:4px;              /* align with <h3> */
+            height:2.4em;         /* band height */
+            background:#f1f5ff;   /* pastel */
+            border-radius:6px;
+            z-index:0;            /* sit behind content */
+            pointer-events:none;
+        }
+        .group-left, .group-right, .group h3{ position:relative; z-index:1; }
+        .group h3{ padding:6px 10px; }
+        /* --- Page Loader --- */
+        #page-loader{
+            position:fixed; inset:0;
+            display:flex; align-items:center; justify-content:center;
+            background:rgba(255,255,255,.94);
+            z-index:100000;
+        }
+        #page-loader.hidden{ display:none; }
+        .page-loader-box{ text-align:center; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:#333; }
+        .page-loader-spinner{
+            width:48px; height:48px; border:4px solid #d0d0d0; border-top-color:#333;
+            border-radius:50%; animation:spin 1s linear infinite; margin:0 auto 12px;
+        }
+        @keyframes spin{ to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+<div id="page-loader">
+  <div class="page-loader-box">
+    <div class="page-loader-spinner"></div>
+    <div>Loading…</div>
+  </div>
+</div>
+<div class="banner">
+    <img alt="Logo" id="logo-left" src="/songs/images/logo.png"/>
+    <div class="banner-title">Play That One!</div>
+    <!-- ← renombrado para el script de actualización -->
+    <img alt="Event Logo" id="eventLogo" src="/songs/images/event-logo.png"/>
+</div>
+
+<div id="lyrics-wrapper">
+    <div id="lyrics-header">
+        <span>Now Playing</span>
+        <button id="toggle-lyrics" type="button">▲</button>
+    </div>
+    <div id="lyrics-container">
+        Loading lyrics...
+    </div>
+
+    <iframe id="ranking-frame" src="./ran.html" style="width:100%; border:none;"></iframe>
+
+    <h1>Vote a Song</h1>
+    <label for="ord-select" style="font-weight: 600; margin-left: 20px;">Order by:</label>
+    <select id="ord-select" style="margin-bottom: 10px; padding: 6px; font-size: 1em;">
+        <option value="artist">Artist</option>
+        <option value="year">Year</option>
+        <option value="language">Language</option>
+        <option value="genre">Genre</option>
+    </select>
+
+    <div id="songs-container"></div>
+    <script>
+        const socket = window.io();
+        function showLoader(){ const el = document.getElementById('page-loader'); if(el) el.classList.remove('hidden'); }
+        function hideLoader(){ const el = document.getElementById('page-loader'); if(el) el.classList.add('hidden'); }
+
+        let deviceId = localStorage.getItem('deviceId');
+        if (!deviceId) {
+            deviceId = 'device_' + Math.random().toString(36).substring(2, 10);
+            localStorage.setItem('deviceId', deviceId);
+        }
+
+        const CATALOG_URL = '/catalog/catalog.json';
+        const songCatalog = {};
+        let currentVotes = {};
+        let selectedId = null;
+        let nowPlayingId = null;        
+        async function loadLyrics(songId) {
+            if (!songId) {
+                document.getElementById('lyrics-container').textContent = 'No song playing.';
+                return;
+            }
+            try {
+                const res = await fetch(`/songs/lyrics/${songId}.txt`);
+                if (!res.ok) throw new Error('Lyrics not found');
+                const text = await res.text();
+                document.getElementById('lyrics-container').textContent = text;
+            } catch (e) {
+                document.getElementById('lyrics-container').textContent = 'Lyrics unavailable.';
+            }
+        }
+
+        function markAll() {
+            const all = document.querySelectorAll('.song');
+            all.forEach(el => el.classList.remove('selected', 'voted', 'played'));
+
+            for (const id in songCatalog) {
+                const song = songCatalog[id];
+                const el = document.getElementById(id);
+                if (!el) continue;
+
+                if (['played', 'now_playing'].includes(song.state)) {
+                    el.classList.add('played');
+                    el.onclick = null;
+                    el.style.pointerEvents = 'none';
+                    el.style.cursor = 'not-allowed';
+                } else if (currentVotes[id]?.includes(deviceId)) el.classList.add('voted');
+                else if (selectedId === id) el.classList.add('selected');
+            }
+        }
+
+        function vote(id) {
+            socket.emit('vote', {deviceId, songId: id});
+            selectedId = null;
+
+            // eliminar voto anterior del dispositivo
+            for (const songId in currentVotes) {
+                if (Array.isArray(currentVotes[songId])) {
+                    currentVotes[songId] = currentVotes[songId].filter(d => d !== deviceId);
+                }
+            }
+
+            // añadir nuevo voto
+            if (!currentVotes[id]) currentVotes[id] = [];
+            currentVotes[id].push(deviceId);
+
+            markAll();
+        }
+
+        let lastVotedId = null;
+
+        function handleClick(id) {
+            if (songCatalog[id]?.state === 'played') return;
+
+            if (selectedId === id) {
+                if (lastVotedId && lastVotedId !== id) {
+                    updateSongState(lastVotedId, 'played');
+                }
+                vote(id);
+                updateSongState(id, 'voted');
+                lastVotedId = id;
+                selectedId = null;
+                markAll();
+            } else {
+                selectedId = id;
+                updateSongState(id, 'selected');
+                markAll();
+            }
+
+            const ranFrame = document.getElementById("ranking-frame");
+            if (ranFrame && ranFrame.contentWindow && typeof ranFrame.contentWindow.markAll === "function") {
+                ranFrame.contentWindow.markAll();
+            }
+        }
+
+        async function init() {
+            const res = await fetch(CATALOG_URL);
+            const catalog = await res.json();
+            const container = document.getElementById('songs-container');
+
+            ORDER_KEY = document.getElementById('ord-select').value;
+            container.innerHTML = '';
+            const grouped = {};
+            catalog.sort((a, b) => a.title.localeCompare(b.title));
+
+            // Manifest de miniaturas (promesa, NO bloquea el render)
+            const thumbsPromise = (ORDER_KEY === 'artist')
+              ? fetch('/songs/images/artist_thumbs/manifest.json', { cache: 'no-store' })
+                  .then(r => r.ok ? r.json() : {})
+                  .catch(() => ({}))
+              : Promise.resolve({});
+
+            catalog.forEach(song => {
+                let group = song[ORDER_KEY];
+                if (!group || group.trim() === '') group = '[Unknown]';
+                if (!grouped[group]) grouped[group] = [];
+                grouped[group].push(song);
+                songCatalog[song.id] = song;
+            });
+
+            const keys = Object.keys(grouped).sort();
+
+            // contenedores de imagen por artista (se rellenan después)
+            const imgTargets = {};
+
+            for (const artist of keys) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'group';
+                const groupHeader = document.createElement('h3');
+
+                if (ORDER_KEY === "year") {
+                    const safeYear = parseInt(artist, 10);
+                    groupHeader.textContent = safeYear;
+
+                    const yearImg = document.createElement("img");
+                    yearImg.src = `/songs/images/year/${safeYear}.png`;
+                    yearImg.alt = safeYear;
+                    yearImg.style.marginLeft = "10px";
+                    groupHeader.appendChild(yearImg);
+                } else {
+                    groupHeader.textContent = artist;
+                }
+
+                // Primero la columna izquierda (título + canciones)
+                const leftContainer = document.createElement('div');
+                leftContainer.className = 'group-left';
+                leftContainer.appendChild(groupHeader);
+                wrapper.appendChild(leftContainer);
+
+                // Ahora la derecha (imagen)
+                const imgContainer = document.createElement('div');
+                imgContainer.className = 'group-right';
+                wrapper.appendChild(imgContainer);
+
+                // guarda el destino donde inyectar la imagen de este artista
+                if (ORDER_KEY === 'artist') {
+                  imgTargets[artist] = imgContainer;
+                }
+
+                grouped[artist].forEach(song => {
+                    const div = document.createElement('div');
+                    div.id = song.id;
+                    div.className = 'song';
+                    const label = song.title || '[No title]';
+                    div.textContent = label;
+                    div.onclick = () => handleClick(song.id);
+                    leftContainer.appendChild(div);
+                });
+                container.appendChild(wrapper);
+            }
+
+            // la UI ya está lista → ocultar loader
+            hideLoader();
+
+            // cuando llegue el manifest, inyectar imágenes sin bloquear al usuario
+            thumbsPromise.then((artistThumbsManifest) => {
+              function variantsFor(k){
+                const v = [];
+                v.push(k);
+                v.push(k.replace(/\//g, "_"));                 // AC/DC -> AC_DC
+                v.push(k.replace(/[’'´`]/g, ""));              // quita apóstrofes
+                v.push(k.normalize('NFD').replace(/\p{Diacritic}/gu,'')); // sin tildes
+                v.push(k.replace(/\s+/g,' ').trim());          // espacios
+                return [...new Set(v)];
+              }
+
+              for (const [artist, el] of Object.entries(imgTargets)) {
+                let file = null;
+                for (const key of variantsFor(artist)) {
+                  if (artistThumbsManifest[key]) { file = artistThumbsManifest[key]; break; }
+                }
+                if (!file) continue;
+
+                const img = document.createElement('img');
+                img.alt = artist;
+                img.loading = 'lazy';
+                img.decoding = 'async';
+                img.width = 400;
+                img.height = 300;
+                img.style.marginLeft = '10px';
+                img.src = `/songs/images/artist/${file}`;
+
+                el.innerHTML = '';
+                el.appendChild(img);
+                if (typeof adjustImageHeights === 'function') adjustImageHeights();
+              }
+            });
+        }
+
+        socket.on('update', (data) => {
+            currentVotes = data.byDevice || {};
+            const counts = data.counts || {};
+            const states = data.states || {};
+
+            let newNowPlaying = null;
+            for (const id in songCatalog) {
+                songCatalog[id].state = states[id] || null;
+                if (songCatalog[id].state === 'now_playing') {
+                    newNowPlaying = id;
+                }
+            }
+
+            if (newNowPlaying !== nowPlayingId) {
+                nowPlayingId = newNowPlaying;
+                loadLyrics(nowPlayingId);
+            }
+
+            markAll();
+            adjustImageHeights();
+        });
+
+        document.getElementById('ord-select').addEventListener('change', () => {
+            // LET toggle (duplicado arriba, se mantiene por compatibilidad)
+            document.getElementById("toggle-lyrics").addEventListener("click", () => {
+                const container = document.getElementById("lyrics-container");
+                const btn = document.getElementById("toggle-lyrics");
+                container.classList.toggle("collapsed");
+                btn.textContent = container.classList.contains("collapsed") ? "▼" : "▲";
+            });
+            showLoader();
+            init();
+        });
+
+        // LET toggle
+        document.getElementById("toggle-lyrics").addEventListener("click", () => {
+            const container = document.getElementById("lyrics-container");
+            const btn = document.getElementById("toggle-lyrics");
+            container.classList.toggle("collapsed");
+            btn.textContent = container.classList.contains("collapsed") ? "▼" : "▲";
+        });
+        
+        // Carga diferida de imágenes (no usada ahora, pero se deja por si vuelves a usar makeLazyImg)
+        const imgIO = new IntersectionObserver((entries)=>{
+          entries.forEach(e=>{
+            if (e.isIntersecting) {
+              const img = e.target;
+              if (img.dataset.src) {
+                img.src = img.dataset.src;
+                img.removeAttribute('data-src');
+              }
+              imgIO.unobserve(img);
+            }
+          });
+        }, {rootMargin: '200px 0px'});
+
+        function makeLazyImg(src, alt){
+          const img = document.createElement('img');
+          img.loading = 'lazy';
+          img.decoding = 'async';
+          img.alt = alt;
+          img.width = 400;  // tamaño lógico para reservar espacio
+          img.height = 300;
+          img.dataset.src = src;
+          imgIO.observe(img);
+          return img;
+        }
+
+        init();
+    </script>
+
+    <script>
+        function adjustImageHeights() {
+            document.querySelectorAll('.group').forEach(group => {
+                const header = group.querySelector('h3');
+                const firstSong = group.querySelector('.song');
+                const img = group.querySelector('.group-right img');
+
+                if (header && firstSong && img) {
+                    const limit = header.offsetHeight + firstSong.offsetHeight;
+                    img.style.maxHeight = limit + "px";
+                }
+            });
+        }
+
+        window.addEventListener('load', adjustImageHeights);
+        window.addEventListener('resize', adjustImageHeights);
+    </script>
+
+    <script>
+        function resizeRankingFrame() {
+            const iframe = document.getElementById('ranking-frame');
+            if (iframe && iframe.contentWindow && iframe.contentWindow.document.body) {
+                iframe.style.height = iframe.contentWindow.document.body.scrollHeight + "px";
+            }
+        }
+        const iframe = document.getElementById('ranking-frame');
+        iframe.addEventListener("load", resizeRankingFrame);
+        // opcional: si notas lag, comenta la línea siguiente:
+        // setInterval(resizeRankingFrame, 1000);
+
+    </script>
+
+    <script src="/songStates.js"></script>
+
+    <script>
+    (function() {
+      function fitSongLabels() {
+        var nodes = document.querySelectorAll('.song');
+        nodes.forEach(function(el) {
+          el.style.fontSize = '';
+          var computed = window.getComputedStyle(el);
+          var size = parseFloat(computed.fontSize) || 19;
+          var min = 9;
+          while (el.scrollWidth > el.clientWidth && size > min) {
+            size -= 1;
+            el.style.fontSize = size + 'px';
+          }
+        });
+      }
+      window.addEventListener('load', fitSongLabels);
+      window.addEventListener('resize', fitSongLabels);
+      var container = document.getElementById('songs-container');
+      if (container) {
+        new MutationObserver(fitSongLabels).observe(container, { childList: true, subtree: true });
+      }
+      window.fitSongLabels = fitSongLabels;
+    })();
+
+</script>
+
+<!-- Cajetín para propuestas -->
+<div id="suggest-box" style="margin:16px auto; padding:12px; border:1px solid #ccc; border-radius:10px; max-width:600px;">
+  <label for="suggest-title" style="font-weight:bold;">Suggest a song</label>
+  <input id="suggest-title" type="text" placeholder="Type a title…" style="margin-left:10px;"/>
+  <button id="suggest-send" type="button">Send</button>
+  <span id="suggest-msg" style="margin-left:8px;"></span>
+</div>
+
+<hr style="margin-top: 40px;">
+
+<div style="text-align: center; padding: 20px; font-size: 1.1em;">
+  <a href="/pto.html" target="_blank" style="margin-right: 20px; font-weight: bold;">
+    PTO: El Proyecto
+  </a>
+
+  <span style="margin-right: 10px;">
+    Donaciones a PTO: <strong>Tel</strong> <span id="pto-phone">0034658327204</span>
+  </span>
+  <button type="button" onclick="copyPhone()">Copiar</button>
+  ``` :contentReference[oaicite:4]{index=4}
+
+  <a href="https://www.instagram.com/playthatone" target="_blank" style="margin-left: 20px; font-weight: bold;">
+    Instagram PTO
+  </a>
+</div>
+
+<script>
+(function(){
+  const $t = document.getElementById('suggest-title');
+  const $b = document.getElementById('suggest-send');
+  const $m = document.getElementById('suggest-msg');
+
+  async function sendProposal(){
+    const title = ($t.value || "").trim();
+    if (!title) { $t.focus(); return; }
+    $b.disabled = true; $m.textContent = "Sending…";
+    try {
+      const r = await fetch('/proposals', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({title})
+      });
+      if (!r.ok) throw new Error('net');
+      $t.value = "";
+      $m.textContent = "Thanks!";
+      setTimeout(()=>{$m.textContent="";}, 1500);
+    } catch(e) {
+      $m.textContent = "Error. Try again later.";
+    } finally {
+      $b.disabled = false;
+    }
+  }
+
+  $b.addEventListener('click', sendProposal);
+  $t.addEventListener('keydown', (e)=>{ if(e.key==='Enter') sendProposal(); });
+})();
+</script>
+
+<script>
+  function copyPhone() {
+    const number = document.getElementById("pto-phone").textContent;
+    navigator.clipboard.writeText(number).then(() => {
+      alert("Número copiado al portapapeles.");
+    });
+  }
+</script>
+
+<!-- === LOGO auto-actualizable (fallback + cache-busting) === -->
+<script>
+(function () {
+  var el = document.getElementById('eventLogo') || document.getElementById('logo-right');
+  if (!el) return;
+  var ts = Date.now();
+  var exts = ['png','jpg','jpeg'];
+  var i = 0;
+  function tryNext() {
+    if (i >= exts.length) return;
+    var src = "/songs/images/event-logo." + exts[i++] + "?t=" + ts;
+    var test = new Image();
+    test.onload = function(){ el.src = src; };
+    test.onerror = tryNext;
+    test.src = src;
+  }
+  tryNext();
+})();
+</script>
+
+</body>
+</html>

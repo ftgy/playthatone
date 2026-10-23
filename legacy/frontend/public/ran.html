@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <title>Live Ranking</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            margin: 0;
+            background-color: #f8f8f8;
+        }
+
+        #ranking-box {
+            border: 2px solid #999;
+            padding: 16px;
+            margin: 20px 0;
+            border-radius: 12px;
+            background-color: #ffffff;
+            /*max-width: 500px;*/
+            width: 100%; /* take full width */
+            box-sizing: border-box; /* include padding + border in width */
+        }
+
+        #ranking-top3 {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        #ranking-top3 li, #ranking-rest li {
+            list-style: none;
+            padding: 14px 18px;
+            font-weight: normal;
+            font-size: 1.1em;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            background-color: #f3f3f3;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #ranking-top3 li.top1 {
+            font-size: 1.4em;
+            font-weight: bold;
+        }
+
+        #ranking-top3 li.top2 {
+            font-size: 1.25em;
+        }
+
+        #ranking-top3 li.top3 {
+            font-size: 1.15em;
+        }
+
+        #ranking-rest {
+            display: flex;
+            flex-direction: column;
+            max-height: 400px;
+            overflow-y: auto;
+            gap: 8px;
+        }
+
+        .selected {
+            background-color: orange !important;
+        }
+
+        .voted {
+            background-color: limegreen !important;
+        }
+
+        .played {
+            background-color: #ccc !important;
+        }
+    
+body, #ranking-box, #ranking-top3, #ranking-rest {
+    background: none !important;
+}
+
+#ranking-top3 li, #ranking-rest li {
+    background-color: #fff !important;
+    border: 1px solid #ccc !important;
+}
+
+#ranking-top3 li.voted, #ranking-rest li.voted {
+    background-color: #32cd32 !important;
+    color: #000 !important;
+}
+
+</style>
+</head>
+<body>
+<h1>Live Ranking</h1>
+<div id="ranking-box">
+    <ul id="ranking-top3"></ul>
+    <ul id="ranking-rest"></ul>
+</div>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+    const CATALOG_URL = "/catalog/catalog.json";
+    const socket = io();
+
+    let songCatalog = {};
+    let currentVotes = {};
+    let selectedId = null;
+    const deviceId = localStorage.getItem("deviceId") || crypto.randomUUID();
+    localStorage.setItem("deviceId", deviceId);
+
+//    function handleClick(id) {
+//        if (selectedId === id) {
+//            socket.emit("vote", {deviceId, songId: id});
+//            selectedId = null;
+//        } else {
+//            selectedId = id;
+//        }
+//        markAll();
+//    }
+    // 🔸 Modificamos handleClick para delegar al padre si existe
+    function handleClick(id) {
+        if (parent && typeof parent.handleClick === "function") { // 🔹 nueva línea
+            console.log(`[RAN] Llamando a parent.handleClick para: ${id}`); // 🔹 mensaje de depuración
+            parent.handleClick(id); // 🔹 llama a la función del padre
+        } else {
+            // fallback local (por si el padre no tiene handleClick)
+            if (selectedId === id) {
+                socket.emit("vote", {deviceId, songId: id});
+                selectedId = null;
+            } else {
+                selectedId = id;
+            }
+            markAll();
+        }
+    }
+
+    function markAll() {
+        const all = document.querySelectorAll('.song');
+        all.forEach(el => el.classList.remove('selected', 'voted', 'played'));
+
+        for (const id in songCatalog) {
+            const song = songCatalog[id];
+            const el = document.getElementById(id);
+            if (!el) continue;
+
+//            if (['played', 'now_playing'].includes(song.state)) {
+//                el.classList.add('played');
+//                el.onclick = null;
+//                el.style.pointerEvents = 'none';
+//                el.style.cursor = 'not-allowed';
+//            } else if (currentVotes[id]?.includes(deviceId)) el.classList.add('voted');
+//            else if (selectedId === id) el.classList.add('selected');
+
+            // 🔹 Nuevo: sincronizar con el padre también en markAll()
+            if (parent && typeof parent.getSongState === "function") {
+                const state = parent.getSongState(id);
+                console.log(`[RAN] markAll - estado ${id}: ${state}`);
+                if (state === "selected") el.classList.add("selected");
+                if (state === "voted") el.classList.add("voted");
+                if (state === "played") el.classList.add("played");
+            }
+
+        }
+    }
+
+    function updateRankingDisplay(rankedIds, counts) {
+        const top3 = rankedIds.slice(0, 3);
+        const rest = rankedIds.slice(3);
+
+        const top3Container = document.getElementById("ranking-top3");
+        const restContainer = document.getElementById("ranking-rest");
+        top3Container.innerHTML = "";
+        restContainer.innerHTML = "";
+
+        for (let i = 0; i < top3.length; i++) {
+            const id = top3[i];
+            const li = createSongLi(id, counts[id], "top" + (i + 1));
+            top3Container.appendChild(li);
+        }
+
+        for (const id of rest) {
+            const li = createSongLi(id, counts[id]);
+            restContainer.appendChild(li);
+        }
+
+        markAll();
+    }
+
+    function createSongLi(id, count, extraClass = "") {
+        console.log("[RAN] createSongLi ejecutado para:", id, "¿parent.getSongState existe?",
+            parent && typeof parent.getSongState === "function");
+
+        const li = document.createElement("li");
+        li.id = id;
+        li.onclick = () => handleClick(id); // 🔸 modificada: ahora llama al handleClick adaptado
+        li.className = "song " + extraClass;
+
+        const titleSpan = document.createElement("span");
+        titleSpan.textContent = songCatalog[id]?.title || id;
+        const countSpan = document.createElement("span");
+        countSpan.textContent = count || 0;
+
+        li.appendChild(titleSpan);
+        li.appendChild(countSpan);
+
+        // 🔹 Intentar aplicar estado desde el padre
+        function tryApplyState() {
+            // 🔹 NUEVO: sincronizar el estado desde el padre si existe getSongState
+            if (parent && typeof parent.getSongState === "function") {
+                const state = parent.getSongState(id);
+                console.log(`[RAN] Estado recibido para ${id}: ${state}`); // debug
+                if (state === "selected") li.classList.add("selected");
+                if (state === "voted") li.classList.add("voted");
+                if (state === "played") li.classList.add("played");
+            }
+            else {
+                console.log(`[RAN] getSongState no disponible aún, reintentando para ${id}...`);
+                setTimeout(tryApplyState, 300); // 🔹 reintenta en 300ms
+            }
+        }
+        tryApplyState(); // primera llamada
+
+        return li;
+    }
+
+    socket.on("update", data => {
+        const byDevice = data.byDevice || {};
+        currentVotes = {};
+        for (const [device, songId] of Object.entries(byDevice)) {
+            if (!currentVotes[songId]) currentVotes[songId] = [];
+            currentVotes[songId].push(device);
+        }
+
+        const states = data.states || {};
+        for (const id in states) {
+            if (songCatalog[id]) songCatalog[id].state = states[id];
+        }
+
+        const counts = data.counts || {};
+        const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([id]) => id);
+        updateRankingDisplay(ranked, counts);
+    });
+
+    async function init() {
+        const res = await fetch(CATALOG_URL);
+        const catalog = await res.json();
+        for (const song of catalog) {
+            songCatalog[song.id] = song;
+        }
+    }
+
+    init().then(() => socket.emit("update_request"));
+</script>
+</body>
+</html>

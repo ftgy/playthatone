@@ -1,0 +1,114 @@
+📂 Resumen del Proyecto PTO
+🗂 requirements.txt
+Lista de dependencias necesarias para ejecutar el proyecto (probablemente Python + librerías web y de base de datos).
+
+📂 backend
+Contiene la lógica del servidor y la gestión de datos.
+
+add_song.py
+Script para añadir nuevas canciones al catálogo, probablemente leyendo letras y tablaturas.
+
+main.py
+Parece ser el archivo principal que arranca la aplicación (probablemente un servidor Flask o similar).
+
+📂 backend/api
+websockets.py
+Gestiona la comunicación en tiempo real (WebSocket) entre frontend y backend, probablemente para el sistema de votación en vivo.
+
+📂 backend/catalog
+gen_catalog.py
+Genera el archivo catalog.json a partir de los datos de las canciones (quizá desde CSV o TXT).
+
+update_states.py
+Actualiza el estado de las canciones (ej. “en reproducción”, “ya tocada”).
+
+📂 backend/core
+catalog_postgres.csv
+CSV con el catálogo completo de canciones (versión para PostgreSQL).
+
+config.py
+Configuración del backend (rutas, conexiones, etc.).
+
+detect_encoding_issues.py
+Script para detectar problemas de codificación en los archivos de texto de canciones.
+
+extract_ids.py
+Extrae los identificadores únicos de cada canción.
+
+init_db.sql
+Script SQL para inicializar la base de datos.
+
+query_songs.py
+Script para consultar canciones (probablemente filtrado/ordenado).
+
+query_songs_grouped.py
+Variante que devuelve canciones agrupadas (ej. por autor, año, idioma).
+
+song_states.json
+Archivo que guarda el estado actual de las canciones (cuál se está tocando, cuáles ya se tocaron).
+
+update_catalog.py
+Actualiza el catálogo de canciones con nuevos datos.
+
+votes.json
+Archivo que guarda los votos de los usuarios en tiempo real.
+
+📂 backend/services
+vote_logic.py
+Contiene la lógica del sistema de votaciones (cálculo, validaciones, conteo).
+
+📂 frontend/public
+Interfaz accesible por el navegador.
+
+addsong.html
+Página para añadir nuevas canciones al sistema.
+
+index.html
+Página principal de la aplicación (probablemente para el público).
+
+inter.html
+Interfaz para el intérprete (muestra tablaturas, estados en vivo).
+
+ran.html
+Pantalla de ranking (votos en tiempo real).
+
+songStates.css
+Hoja de estilos para mostrar estados de canciones.
+
+songStates.js
+Lógica en JavaScript para actualizar dinámicamente estados/votos.
+
+📂 frontend/public/catalog
+catalog.json
+Catálogo visible desde el frontend (generado por el backend).
+
+📂 songs
+Contiene todos los datos relacionados con canciones.
+
+📂 songs/images
+Imágenes asociadas a autores, idiomas, géneros, estados de ánimo, y años.
+
+artist/
+Fotos de artistas (ej. Bob Dylan, The Beatles).
+
+language/
+Banderas o íconos por idioma (ej. English.png, Spanish.png).
+
+year/
+Iconos por década/año (ej. 1950.png).
+
+mood/
+Probablemente imágenes relacionadas con estados de ánimo (aunque está vacío ahora).
+
+genre/
+Carpeta preparada para géneros musicales (vacía en este snapshot).
+
+logo/event-logo.png
+Logos para la aplicación y eventos.
+
+📂 songs/lyrics
+Archivos .txt con las letras de las canciones (cada archivo = una canción).
+
+📂 songs/tabs
+Archivos .txt con tablaturas (prefijo TAB para distinguirlas de las letras).
+
