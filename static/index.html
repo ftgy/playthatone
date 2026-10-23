@@ -741,7 +741,9 @@
       if (data.songs) {
         // Only re-render the list if the catalog changed
         const catalogKey = s => [s.id, s.title, s.artist, s.genre, s.year, s.language].join('|');
-        const catalogChanged = data.songs.map(catalogKey).join() !== songs.map(catalogKey).join();
+        // photo_added: a new artist photo was downloaded, re-render to show it
+        const catalogChanged = data.event === 'photo_added' ||
+                               data.songs.map(catalogKey).join() !== songs.map(catalogKey).join();
         applySongs(data.songs, catalogChanged);
       }
     };

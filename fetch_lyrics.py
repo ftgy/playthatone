@@ -11,106 +11,17 @@ Options:
     --base-url URL   app to update (default http://127.0.0.1:8080)
     ADMIN_TOKEN      env var, sent as the Bearer token (not needed with DISABLE_AUTH=1)
 
-Lyrics: LRCLIB (lrclib.net) first, then lyrics.ovh. Chords: Ultimate Guitar, via
-the app's /admin/chords endpoints, taking the most voted "Chords" tab. A result is
-only kept when its artist matches the requested one. --ug-top skips songs whose
-title is already in the catalog, even by another artist (one "Hallelujah" is enough).
+Sources are in enrich.py (lyrics: LRCLIB, then lyrics.ovh; chords: the most voted
+Ultimate Guitar "Chords" tab). Songs added here are also filled in by the app in
+the background (photo, style/year/language, and anything else still missing).
+--ug-top skips songs whose title is already in the catalog, even by another artist
+(one "Hallelujah" is enough).
 """
 import argparse
-import json
 import os
 import re
-import time
-import unicodedata
-import urllib.error
-import urllib.parse
-import urllib.request
 
-USER_AGENT = "PlayThatOne/1.0 (https://github.com/mathieumllt/playthatone)"
-
-
-def http_json(url, method="GET", body=None, token=None, timeout=20):
-    headers = {"User-Agent": USER_AGENT}
-    data = None
-    if body is not None:
-        headers["Content-Type"] = "application/json"
-        data = json.dumps(body).encode()
-    if token:
-        headers["Authorization"] = "Bearer " + token
-    req = urllib.request.Request(url, data=data, method=method, headers=headers)
-    # Retry when a source is rate-limiting or briefly unavailable
-    for delay in (2, 5, 10, None):
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as res:
-                raw = res.read()
-                return json.loads(raw) if raw else None
-        except urllib.error.HTTPError as e:
-            if e.code not in (429, 503) or delay is None:
-                raise
-            time.sleep(delay)
-
-
-def norm(s):
-    s = unicodedata.normalize("NFD", s.lower())
-    s = "".join(c for c in s if not unicodedata.combining(c))
-    s = re.sub(r"^the\s+", "", s)
-    return re.sub(r"[^a-z0-9]+", "", s.replace("&", "and"))
-
-
-def same_artist(a, b):
-    a, b = norm(a), norm(b)
-    return bool(a) and (a == b or a in b or b in a)
-
-
-def clean(lyrics):
-    lines = [line.rstrip() for line in lyrics.strip().splitlines()]
-    # lyrics.ovh sometimes prepends "Paroles de la chanson X par Y"
-    if lines and lines[0].lower().startswith("paroles de la chanson"):
-        lines = lines[1:]
-    text = "\n".join(lines).strip()
-    return re.sub(r"\n{3,}", "\n\n", text) or None
-
-
-def from_lrclib(artist, title):
-    q = urllib.parse.urlencode({"artist_name": artist, "track_name": title})
-    try:
-        hit = http_json("https://lrclib.net/api/get?" + q)
-        if hit and hit.get("plainLyrics") and same_artist(hit["artistName"], artist):
-            return clean(hit["plainLyrics"]), hit["trackName"]
-    except urllib.error.HTTPError as e:
-        if e.code != 404:
-            raise
-    # Exact lookup failed: search and take the first result by the same artist
-    q = urllib.parse.urlencode({"q": f"{artist} {title}"})
-    for hit in http_json("https://lrclib.net/api/search?" + q) or []:
-        if hit.get("plainLyrics") and same_artist(hit["artistName"], artist) and norm(title) in norm(hit["trackName"]):
-            return clean(hit["plainLyrics"]), hit["trackName"]
-    return None, None
-
-
-def from_lyrics_ovh(artist, title):
-    url = "https://api.lyrics.ovh/v1/{}/{}".format(urllib.parse.quote(artist), urllib.parse.quote(title))
-    try:
-        data = http_json(url)
-    except urllib.error.HTTPError:
-        return None, None
-    lyrics = (data or {}).get("lyrics") or ""
-    return (clean(lyrics) if len(lyrics) > 20 else None), None
-
-
-def fetch(artist, title):
-    """Returns (lyrics, source name, track name as the source spells it)."""
-    time.sleep(0.5)   # be gentle with the free APIs
-    for name, source in (("lrclib", from_lrclib), ("lyrics.ovh", from_lyrics_ovh)):
-        try:
-            lyrics, track = source(artist, title)
-        except Exception as exc:
-            print(f"    ({name} error: {exc})")
-            continue
-        if lyrics:
-            return lyrics, name, track
-        time.sleep(0.3)
-    return None, None, None
+from enrich import find_chords, find_lyrics, http_json, norm, title_key, ug_fetch_tab, ug_top
 
 
 def nicer_title(ug_title, track):
@@ -121,28 +32,6 @@ def nicer_title(ug_title, track):
         if track and norm(track) == norm(ug_title):
             return track
     return ug_title
-
-
-def title_key(title):
-    # "Knocking" and "Knockin'" are the same song
-    return norm(re.sub(r"ing\b", "in", title.lower()))
-
-
-def fetch_chords(base, token, artist, title):
-    time.sleep(1)   # be gentle with UG
-    q = urllib.parse.urlencode({"artist": artist, "title": title})
-    try:
-        results = http_json(f"{base}/admin/chords/search?{q}", token=token)
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None, None
-        raise
-    for tab in results:
-        if same_artist(tab["artist_name"], artist) and title_key(title) in title_key(tab["song_name"]):
-            q = urllib.parse.urlencode({"url": tab["url"]})
-            chords = http_json(f"{base}/admin/chords/fetch?{q}", token=token, timeout=30)["chords"]
-            return chords, tab
-    return None, None
 
 
 def parse_song_file(path):
@@ -179,7 +68,7 @@ def main():
     if args.fill_missing:
         print("== Filling missing lyrics")
         for song in [s for s in catalog if not s["lyrics"]]:
-            lyrics, source, _ = fetch(song["artist"], song["title"])
+            lyrics, source, _, _ = find_lyrics(song["artist"], song["title"])
             if not lyrics:
                 print(f"  ✗ {song['title']} — {song['artist']}: not found")
                 missed += 1
@@ -197,7 +86,7 @@ def main():
             if (norm(artist), norm(title)) in existing:
                 print(f"  = {title} — {artist}: already in catalog")
                 continue
-            lyrics, source, _ = fetch(artist, title)
+            lyrics, source, _, _ = find_lyrics(artist, title)
             status = f"{source}, {len(lyrics.splitlines())} lines" if lyrics else "no lyrics found, added anyway"
             print(f"  + {title} — {artist} ({status})")
             found += bool(lyrics)
@@ -213,7 +102,7 @@ def main():
         catalog = http_json(base + "/admin/songs", token=token)   # includes songs added above
         for song in [s for s in catalog if not s["chords"]]:
             try:
-                chords, tab = fetch_chords(base, token, song["artist"], song["title"])
+                chords, tab = find_chords(song["artist"], song["title"])
             except Exception as exc:
                 print(f"  ✗ {song['title']} — {song['artist']}: error ({exc})")
                 missed += 1
@@ -234,21 +123,18 @@ def main():
         position = max((s["position"] or 0 for s in catalog), default=-1) + 1
         added, page = 0, 1
         while added < args.ug_top and page <= 20:
-            for tab in http_json(f"{base}/admin/chords/top?page={page}", token=token, timeout=30):
+            for tab in ug_top(page):
                 if added >= args.ug_top:
                     break
                 artist, title = tab["artist_name"], tab["song_name"]
                 if title_key(title) in titles:
                     continue
                 titles.add(title_key(title))
-                time.sleep(1)   # be gentle with UG
-                try:
-                    q = urllib.parse.urlencode({"url": tab["url"]})
-                    chords = http_json(f"{base}/admin/chords/fetch?{q}", token=token, timeout=30)["chords"]
-                except Exception as exc:
-                    print(f"  ✗ {title} — {artist}: chords error ({exc})")
+                chords = ug_fetch_tab(tab["url"])
+                if not chords:
+                    print(f"  ✗ {title} — {artist}: chords not found")
                     continue
-                lyrics, source, track = fetch(artist, title)
+                lyrics, source, track, _ = find_lyrics(artist, title)
                 title = nicer_title(title, track)
                 added += 1
                 found += bool(lyrics)

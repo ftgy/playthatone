@@ -42,6 +42,8 @@
     align-items: center; gap: 1rem; background: #0d0d0d;
   }
   .song-row-meta { font-size: 0.6rem; color: #555; letter-spacing: 0.1em; margin-top: 0.15rem; }
+  .song-row-enrich { font-size: 0.6rem; color: #8a8; letter-spacing: 0.1em; margin-top: 0.15rem; }
+  .song-row-enrich.running { color: #d9b44a; }
   .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 1px; }
   .info-grid label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.6rem; color: #555; letter-spacing: 0.15em; text-transform: uppercase; }
   .song-row.played { opacity: 0.45; }
@@ -245,7 +247,7 @@
       <input type="text" id="new-artist" placeholder="Artista">
       <button class="btn-primary" id="btn-add-song">Anadir</button>
     </div>
-    <div style="font-size:0.6rem;color:#333;letter-spacing:0.1em;margin-top:0.5rem">Selecciona un resultado o escribe manualmente</div>
+    <div style="font-size:0.6rem;color:#333;letter-spacing:0.1em;margin-top:0.5rem">Titulo y artista: la letra, los acordes, el estilo/ano/idioma y la foto se buscan solos</div>
   </div>
 </div>
 
@@ -261,6 +263,7 @@
     </div>
     <datalist id="genre-options"></datalist>
     <datalist id="language-options"></datalist>
+    <button class="btn-sm" id="btn-enrich-info" title="Letra, acordes, estilo/ano/idioma y foto del artista">Buscar online lo que falta</button>
     <div class="modal-actions">
       <button class="btn-primary" id="btn-save-info">Guardar</button>
       <button class="btn-reset" style="flex:1" id="btn-close-info">Cancelar</button>
@@ -325,6 +328,8 @@
 let token = "";
 let editingSongId = null;
 let songs = [];
+let enrichStatus = {};   // song id → online search progress (from /admin/stats)
+let enrichPoll = null;
 let searchTimer = null;
 let modalSearchTimer = null;
 
@@ -362,6 +367,12 @@ async function loadStats() {
   try {
     var data = await api("/admin/stats");
     songs = data.songs;
+    enrichStatus = data.enrich || {};
+    // Refresh faster while a song is being searched online
+    var searching = Object.values(enrichStatus).some(function(st) { return st.running; });
+    if (searching && !enrichPoll) {
+      enrichPoll = setTimeout(function() { enrichPoll = null; loadStats(); }, 1500);
+    }
     document.getElementById("stat-votes").textContent = data.total_votes;
     document.getElementById("stat-connected").textContent = data.connected_clients;
     document.getElementById("stat-songs").textContent = songs.length;
@@ -475,6 +486,13 @@ function renderSongs() {
       metaEl.textContent = meta;
       info.appendChild(metaEl);
     }
+    var enrichLine = describeEnrich(enrichStatus[song.id]);
+    if (enrichLine) {
+      var enrichEl = document.createElement("div");
+      enrichEl.className = "song-row-enrich" + (enrichStatus[song.id].running ? " running" : "");
+      enrichEl.textContent = enrichLine;
+      info.appendChild(enrichEl);
+    }
 
     var votesEl = document.createElement("div");
     votesEl.className = "song-row-votes";
@@ -539,9 +557,14 @@ async function addSong() {
     document.getElementById("new-title").value = "";
     document.getElementById("new-artist").value = "";
     var acAdd = document.getElementById("ac-add"); if (acAdd) acAdd.classList.remove("open");
-    showToast("Cancion anadida");
+    showToast("Cancion anadida: buscando letra, acordes y foto...");
     await loadStats();
-  } catch(err) { console.error("addSong error:", err); showToast("Error al anadir"); }
+  } catch(err) {
+    console.error("addSong error:", err);
+    var detail = "";
+    try { detail = JSON.parse(err.message).detail; } catch(_) {}
+    showToast(typeof detail === "string" && detail ? detail : "Error al anadir");
+  }
 }
 
 async function deleteSong(id, title) {
@@ -660,6 +683,26 @@ function openLyricsModal(id) {
   document.getElementById("ac-modal").classList.remove("open");
   document.getElementById("modal-lyrics").value = song && song.lyrics ? song.lyrics : "";
   document.getElementById("lyrics-overlay").classList.add("open");
+}
+
+// ONLINE SEARCH (lyrics, photo, chords, info), run by the server in the background
+var ENRICH_LABELS = { lyrics: "letra", photo: "foto", chords: "acordes", info: "info" };
+var ENRICH_MARKS = { pending: "·", searching: "…", found: "✓", partial: "~", had: "✓", not_found: "✗", error: "⚠" };
+
+function describeEnrich(st) {
+  if (!st) return "";
+  var parts = Object.keys(ENRICH_LABELS).map(function(step) {
+    return ENRICH_LABELS[step] + " " + (ENRICH_MARKS[st[step]] || "?");
+  });
+  return (st.running ? "Buscando online: " : "Busqueda online: ") + parts.join(" · ");
+}
+
+async function enrichSong(id) {
+  try {
+    await api("/admin/songs/" + id + "/enrich", "POST");
+    showToast("Buscando lo que falta online...");
+    await loadStats();
+  } catch(e) { showToast("Error al buscar"); }
 }
 
 // SONG INFO (title, artist, style, year, language)
@@ -994,6 +1037,11 @@ document.addEventListener("DOMContentLoaded", function() {
   if (btnClose) btnClose.addEventListener("click", closeModal);
   document.getElementById("btn-save-info").addEventListener("click", saveInfo);
   document.getElementById("btn-close-info").addEventListener("click", closeInfoModal);
+  document.getElementById("btn-enrich-info").addEventListener("click", function() {
+    var id = editingInfoId;
+    closeInfoModal();
+    enrichSong(id);
+  });
   var tokenInput = document.getElementById("token-input");
   if (tokenInput) tokenInput.addEventListener("keydown", function(e) { if (e.key === "Enter") login(); });
 

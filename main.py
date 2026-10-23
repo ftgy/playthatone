@@ -1,5 +1,5 @@
+import asyncio
 import os
-import html
 import json
 import logging
 import re
@@ -14,7 +14,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import List
 
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Header, Request, Response, Cookie
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Header, Request, Response, Cookie, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
@@ -22,7 +22,9 @@ from sqlalchemy import func
 from dotenv import load_dotenv
 
 from sqlalchemy import inspect as sa_inspect, text
-from database import engine, get_db, Base
+from database import engine, get_db, Base, SessionLocal
+import enrich
+from enrich import UG_TAB_URL, ug_search, ug_fetch_tab
 from models import Song, Vote, Proposal
 from schemas import SongCreate, SongUpdate, LyricsUpdate, ChordsUpdate, SongOut, ProposalCreate
 
@@ -264,6 +266,130 @@ async def websocket_endpoint(ws: WebSocket, db: Session = Depends(get_db)):
     except WebSocketDisconnect:
         manager.disconnect(ws)
 
+# ── Online enrichment (lyrics, chords, style/year/language, photo) ────────────
+
+ENRICH_STEPS = ("lyrics", "photo", "chords", "info")
+# song id → {"running": bool, "finished_at": float|None, <step>: state}
+# step states: "pending", "searching", "found", "partial" (info: some fields),
+#              "had" (already filled), "not_found", "error"
+enrich_status: dict = {}
+_enrich_slots = asyncio.Semaphore(2)   # songs searched at the same time (the sources rate-limit)
+
+
+class _SongGone(Exception):
+    pass
+
+
+def _queue_enrich(song_id: int, background_tasks: BackgroundTasks):
+    if enrich_status.get(song_id, {}).get("running"):
+        return
+    # Forget results older than an hour
+    for sid, st in list(enrich_status.items()):
+        if not st["running"] and time.time() - st["finished_at"] > 3600:
+            del enrich_status[sid]
+    enrich_status[song_id] = {"running": True, "finished_at": None, **{s: "pending" for s in ENRICH_STEPS}}
+    background_tasks.add_task(_enrich_song, song_id)
+
+
+async def _save_song(song_id: int, fill: dict = None, rename: dict = None, event: str = "song_enriched"):
+    """Write what was found, without overwriting anything set in the meantime.
+
+    fill:   fields written only if still empty
+    rename: {"title": (typed, canonical)}: written only if the value is still the typed one
+    """
+    db = SessionLocal()
+    try:
+        song = db.query(Song).filter(Song.id == song_id).first()
+        if not song:
+            raise _SongGone()
+        for field, value in (fill or {}).items():
+            if value and not getattr(song, field):
+                setattr(song, field, value)
+        for field, (typed, canonical) in (rename or {}).items():
+            if getattr(song, field) == typed:
+                setattr(song, field, canonical)
+        db.commit()
+        await manager.broadcast({"event": event, "songs": songs_with_votes(db)})
+    finally:
+        db.close()
+
+
+async def _enrich_song(song_id: int):
+    status = enrich_status[song_id]
+    db = SessionLocal()
+    song = db.query(Song).filter(Song.id == song_id).first()
+    db.close()
+    if not song:
+        status.update(running=False, finished_at=time.time())
+        return
+    found = {"lyrics": song.lyrics, "chords": song.chords, "genre": song.genre,
+             "year": song.year, "language": song.language}
+    names = {"title": song.title, "artist": song.artist}
+
+    async def lyrics_step():
+        if found["lyrics"]:
+            return "had"
+        lyrics, _, track, artist = await asyncio.to_thread(enrich.find_lyrics, names["artist"], names["title"])
+        if not lyrics:
+            return "not_found"
+        found["lyrics"] = lyrics
+        # Same title/artist apart from case and punctuation: use the source's spelling
+        rename = {}
+        for field, canonical in (("title", track), ("artist", artist)):
+            if canonical and canonical != names[field] and enrich.norm(canonical) == enrich.norm(names[field]):
+                rename[field] = (names[field], canonical)
+                names[field] = canonical
+        await _save_song(song_id, fill={"lyrics": lyrics}, rename=rename)
+        return "found"
+
+    async def photo_step():
+        path = enrich.photo_path(names["artist"])
+        if path and os.path.exists(path):
+            return "had"
+        if not await asyncio.to_thread(enrich.save_artist_photo, names["artist"]):
+            return "not_found"
+        await _save_song(song_id, event="photo_added")   # audience pages reload the photos
+        return "found"
+
+    async def chords_step():
+        if found["chords"]:
+            return "had"
+        chords, _ = await asyncio.to_thread(enrich.find_chords, names["artist"], names["title"])
+        if not chords:
+            return "not_found"
+        await _save_song(song_id, fill={"chords": chords})
+        return "found"
+
+    async def info_step():
+        if found["genre"] and found["year"] and found["language"]:
+            return "had"
+        fill = {}
+        if not found["language"]:
+            fill["language"] = enrich.detect_language(found["lyrics"])
+        if not (found["year"] and found["genre"]):
+            fill["year"], fill["genre"] = await asyncio.to_thread(enrich.find_year_and_style, names["artist"], names["title"])
+        if not any(fill.values()):
+            return "not_found"
+        await _save_song(song_id, fill=fill)
+        complete = all(found[f] or fill.get(f) for f in ("genre", "year", "language"))
+        return "found" if complete else "partial"
+
+    steps = {"lyrics": lyrics_step, "photo": photo_step, "chords": chords_step, "info": info_step}
+    async with _enrich_slots:
+        for name in ENRICH_STEPS:
+            status[name] = "searching"
+            try:
+                status[name] = await steps[name]()
+            except _SongGone:
+                break
+            except Exception as exc:
+                logger.error("Enrich %s failed for song %d: %s", name, song_id, exc)
+                status[name] = "error"
+    status.update(running=False, finished_at=time.time())
+    logger.info("Enriched song %d (%s — %s): %s", song_id, names["title"], names["artist"],
+                {s: status[s] for s in ENRICH_STEPS})
+
+
 # ── Admin routes ──────────────────────────────────────────────────────────────
 
 @app.get("/admin/songs")
@@ -272,13 +398,38 @@ def admin_get_songs(db: Session = Depends(get_db), _=Depends(check_admin)):
 
 
 @app.post("/admin/songs", status_code=201)
-async def admin_add_song(body: SongCreate, db: Session = Depends(get_db), _=Depends(check_admin)):
-    song = Song(**body.model_dump())
+async def admin_add_song(body: SongCreate, background_tasks: BackgroundTasks,
+                         db: Session = Depends(get_db), _=Depends(check_admin)):
+    data = body.model_dump()
+    data["title"], data["artist"] = data["title"].strip(), data["artist"].strip()
+    if not data["title"] or not data["artist"]:
+        raise HTTPException(status_code=400, detail="Titulo y artista requeridos")
+    # Artist already in the catalog: reuse its spelling (one group, one photo)
+    for (existing,) in db.query(Song.artist).distinct():
+        if enrich.norm(existing) == enrich.norm(data["artist"]):
+            data["artist"] = existing
+            break
+    for other in db.query(Song).filter(Song.artist == data["artist"]):
+        if enrich.title_key(other.title) == enrich.title_key(data["title"]):
+            raise HTTPException(status_code=409, detail="Esa cancion ya esta en el catalogo")
+
+    song = Song(**data)
     db.add(song)
     db.commit()
     db.refresh(song)
     await manager.broadcast({"event": "votes_update", "songs": songs_with_votes(db)})
+    _queue_enrich(song.id, background_tasks)
     return song
+
+
+@app.post("/admin/songs/{song_id}/enrich", status_code=202)
+def admin_enrich_song(song_id: int, background_tasks: BackgroundTasks,
+                      db: Session = Depends(get_db), _=Depends(check_admin)):
+    """Search online for whatever the song is missing (lyrics, chords, info, photo)."""
+    if not db.query(Song).filter(Song.id == song_id).first():
+        raise HTTPException(status_code=404, detail="Cancion no encontrada")
+    _queue_enrich(song_id, background_tasks)
+    return enrich_status[song_id]
 
 
 @app.patch("/admin/songs/{song_id}")
@@ -399,6 +550,7 @@ def admin_stats(db: Session = Depends(get_db), _=Depends(check_admin)):
         "total_votes": total_votes,
         "connected_clients": connected,
         "songs": songs_with_votes(db),
+        "enrich": enrich_status,
     }
 
 
@@ -452,70 +604,6 @@ def search_chartlyrics_list(query: str) -> list:
 
 # ── Ultimate Guitar (chords) ─────────────────────────────────────────────────
 
-# The mobile API (api.ultimate-guitar.com) now rejects requests, so we read the
-# JSON that the website embeds in its pages (<div class="js-store" data-content=...>).
-UG_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
-    "Accept-Language": "en-US,en;q=0.9",
-}
-UG_TAB_URL = re.compile(r"^https://tabs\.ultimate-guitar\.com/tab/[\w\-/]+$")
-
-
-def _ug_page_data(url: str) -> dict:
-    req = urllib.request.Request(url, headers=UG_HEADERS)
-    with urllib.request.urlopen(req, timeout=15) as r:
-        page = r.read().decode("utf-8")
-    m = re.search(r'class="js-store" data-content="([^"]*)"', page)
-    if not m:
-        raise RuntimeError("UG page format changed (no js-store)")
-    return json.loads(html.unescape(m.group(1)))["store"]["page"]["data"]
-
-
-def ug_search(artist: str, title: str) -> list:
-    """Search Ultimate Guitar for chord tabs, most voted first.
-
-    Returns:
-        list: results found.
-    Raises:
-        RuntimeError: if UG is unreachable or its page format changed.
-    """
-    query = urllib.parse.urlencode({"search_type": "title", "value": f"{artist} {title}"})
-    try:
-        data = _ug_page_data(f"https://www.ultimate-guitar.com/search.php?{query}")
-    except Exception as exc:
-        logger.error("UG search error for '%s %s': %s", artist, title, exc)
-        raise RuntimeError(f"Ultimate Guitar unreachable: {exc}") from exc
-    tabs = [t for t in data.get("results", []) if t.get("type") == "Chords"]
-    tabs.sort(key=lambda t: t.get("votes") or 0, reverse=True)
-    results = [{
-        "id": t.get("id"),
-        "url": t.get("tab_url", ""),
-        "song_name": t.get("song_name", ""),
-        "artist_name": t.get("artist_name", ""),
-        "rating": t.get("rating", 0),
-        "votes": t.get("votes", 0),
-        "tonality": t.get("tonality_name", ""),
-        "difficulty": t.get("difficulty", ""),
-    } for t in tabs[:8]]
-    logger.info("UG search '%s %s' → %d chords results", artist, title, len(results))
-    return results
-
-
-def ug_fetch_tab(url: str) -> str:
-    """Fetch a UG tab page's content and clean up its proprietary format."""
-    try:
-        data = _ug_page_data(url)
-        content = data.get("tab_view", {}).get("wiki_tab", {}).get("content", "")
-    except Exception as exc:
-        logger.error("UG fetch error for %s: %s", url, exc)
-        return ""
-    # Clean up the UG format: [ch]Am[/ch] → Am, [tab]...[/tab] → ...
-    content = content.replace("\r\n", "\n")
-    content = re.sub(r"\[ch\](.*?)\[/ch\]", r"\1", content)
-    content = re.sub(r"\[/?tab\]", "", content)
-    return content.strip()
-
-
 @app.get("/admin/chords/search")
 def chords_search(artist: str, title: str, _=Depends(check_admin)):
     if not artist or not title:
@@ -533,17 +621,10 @@ def chords_search(artist: str, title: str, _=Depends(check_admin)):
 def chords_top(page: int = 1, _=Depends(check_admin)):
     """UG's most viewed chord tabs of all time, 50 per page."""
     try:
-        data = _ug_page_data(f"https://www.ultimate-guitar.com/explore?type[]=Chords&order=hitstotal_desc&page={page}")
+        return enrich.ug_top(page)
     except Exception as exc:
         logger.error("UG explore error (page %d): %s", page, exc)
         raise HTTPException(status_code=502, detail=f"Ultimate Guitar unreachable: {exc}")
-    return [{
-        "id": t.get("id"),
-        "url": t.get("tab_url", ""),
-        "song_name": t.get("song_name", ""),
-        "artist_name": t.get("artist_name", ""),
-        "votes": t.get("votes", 0),
-    } for t in data.get("data", {}).get("tabs", []) if t.get("type") == "Chords"]
 
 
 @app.get("/admin/chords/fetch")
